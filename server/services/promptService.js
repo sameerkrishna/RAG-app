@@ -11,8 +11,7 @@ RULES:
 5. Maintain conversation continuity but don't repeat information unnecessarily.
 6. Format responses in clear, readable markdown.`;
 
-const REFUSAL_MESSAGE = 'I couldn\'t find enough supporting information in the current knowledge base.';
-
+const REFUSAL_MESSAGE = "I don't have enough information in the knowledge base to answer that confidently. Try uploading relevant documents, or ask me a general question.";
 export function buildPrompt({ query, context, memoryContext, coverage }) {
   const parts = [];
 
