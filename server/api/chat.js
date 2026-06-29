@@ -83,13 +83,17 @@ ${memoryContext ? `CONVERSATION HISTORY:\n${memoryContext}\n\n` : ''}CURRENT QUE
 Answer concisely and cite sources using [1], [2] etc. referring to the context numbers above.`;
 
     } else {
-      // ✅ FIX: No context — allow natural conversation instead of refusing
-      prompt = `You are a helpful AI Knowledge Assistant. You can answer general questions and have natural conversations. When users upload documents, you will be able to answer questions specifically about those documents.
+       // ✅ No context — greet naturally but don't answer knowledge questions
+  prompt = `You are a Knowledge Assistant that answers questions strictly based on uploaded documents.
 
 ${memoryContext ? `CONVERSATION HISTORY:\n${memoryContext}\n\n` : ''}CURRENT QUESTION: ${query}
 
-Respond naturally and helpfully. If the question requires specific document knowledge, let the user know they can upload relevant documents.`;
-    }
+RULES:
+- For greetings or small talk (e.g. "hi", "hello", "how are you"), respond briefly and warmly.
+- For ANY factual, technical, or knowledge-based question, do NOT attempt to answer it. Instead, tell the user that no documents have been uploaded yet and invite them to upload relevant documents so you can provide a grounded answer.
+- Never write code, explain general concepts, or answer from your own training knowledge.
+- Keep responses short.`;
+}
 
     let fullResponse = '';
 
