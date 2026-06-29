@@ -1,10 +1,25 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({
-  model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2'
-});
+// ✅ FIX: Lazy init — defer model construction until first call so
+// process.env.GEMINI_API_KEY is guaranteed to be loaded by then
+let embeddingModel = null;
+
+function getEmbeddingModel() {
+  if (!embeddingModel) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new EmbeddingError(
+        'GEMINI_API_KEY is undefined at embedding call time — check env load order'
+      );
+    }
+    const genAI = new GoogleGenerativeAI(apiKey);
+    embeddingModel = genAI.getGenerativeModel({
+      model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2'
+    });
+  }
+  return embeddingModel;
+}
 
 const rateLimitState = {
   tokenCount: 0,
@@ -44,11 +59,11 @@ async function waitForRateLimit(tokens = 0) {
 
 async function embedWithRetry(text, attempt = 1, maxAttempts = 5) {
   const baseRetryDelay = 60000;
-  // ✅ FIX 4: Short delay for transient spurious API_KEY_INVALID 400s
   const invalidKeyRetryDelay = 2000;
 
   try {
-    const result = await embeddingModel.embedContent(text);
+    // ✅ FIX: Use lazy getter instead of module-level constant
+    const result = await getEmbeddingModel().embedContent(text);
 
     if (result.embedding) {
       return result.embedding.values;
