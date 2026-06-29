@@ -102,6 +102,8 @@ RULES:
       if (chunk.type === 'token') {
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
+        // ✅ Add a small delay between tokens for natural streaming feel
+    await new Promise(resolve => setTimeout(resolve, 30));
       } else if (chunk.type === 'error') {
         sendEvent('error', { message: chunk.error, code: 'LLM_ERROR' });
       } else if (chunk.type === 'complete') {
