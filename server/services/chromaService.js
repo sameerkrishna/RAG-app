@@ -49,7 +49,8 @@ export async function getGlobalCollection() {
         metadata: {
           description: 'Permanent seed documents for RAG',
           type: 'global_knowledge'
-        }
+        },
+        embeddingFunction: null
       });
       console.log(`✅ Global collection ready: ${collectionName}`);
     } catch (error) {
@@ -73,7 +74,8 @@ export async function getSessionCollection(sessionId) {
         type: 'session_upload',
         session_id: sessionId,
         created: new Date().toISOString()
-      }
+      },
+      embeddingFunction: null
     });
     sessionCollections.set(sessionId, collection);
     console.log(`✅ Session collection ready: ${collectionName}`);
