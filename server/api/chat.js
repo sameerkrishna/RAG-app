@@ -96,7 +96,7 @@ export async function handleChatStream(req, res) {
 
     const contextText = formatContextForPrompt(results);
 
-    const memoryContext = getRecentTurns(sessionId, 5)
+    const memoryContext = getRecentTurns(sessionId, 10)
       .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
       .join('\n\n');
 
