@@ -7,8 +7,6 @@ import { getOrCreateSession } from '../services/sessionService.js';
 
 const router = Router();
 
-// Fix 2: Short-circuit greetings — no retrieval, no citations
-const GREETING_PATTERN = /^(hi|hello|hey|thanks|thank you|bye|ok|okay|cool|great|sure|yes|no|got it|nice|awesome|perfect|sounds good|good|noted)[\s!?.]*$/i;
 
 // Fix 4: Detect when LLM says it can't answer from context
 const OUT_OF_SCOPE_PATTERN = /don't have information|do not have information|not in my knowledge|can't find|cannot find|no information|knowledge base doesn't|not covered|outside.*knowledge/i;
