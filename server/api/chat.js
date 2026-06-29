@@ -30,9 +30,11 @@ export async function handleChatStream(req, res) {
   res.setHeader('x-answer-id', answerId);
 
   const sendEvent = (event, data) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  // ✅ Force flush through Vite's middleware buffer immediately
+  if (typeof res.flush === 'function') res.flush();
+};
 
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
