@@ -249,7 +249,7 @@ export async function cleanupSessionCollections() {
     await Promise.allSettled(
   sessionCollectionNames.map(async collectionName => {
     try {
-      await client.deleteCollection(collectionName);
+      await client.deleteCollection({ name: collectionName });
       console.log(`  ✅ Deleted: ${collectionName}`);
     } catch (err) {
       console.warn(`  ⚠️ Could not delete ${collectionName}:`, err.message);
