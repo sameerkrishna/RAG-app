@@ -1,20 +1,39 @@
-// Token estimation: ~4 characters per token for English text
+import { createHash } from 'crypto';
+
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_CHUNK_SIZE_TOKENS = 1000;
 const DEFAULT_OVERLAP_TOKENS = 200;
+const MIN_CHUNK_CHARS = 100;
 
 export function estimateTokens(text) {
   if (!text || typeof text !== 'string') return 0;
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
+// Fix 5: Clean raw PDF text before chunking
+export function cleanText(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/\f/g, '\n')                // form feeds → newline
+    .replace(/(\s*\n){3,}/g, '\n\n')     // collapse 3+ blank lines to 2
+    .replace(/^\s*\d+\s*$/gm, '')        // remove lone page numbers
+    .replace(/[ \t]{2,}/g, ' ')          // collapse multiple spaces/tabs
+    .trim();
+}
+
+// Fix 4: Content-hash based chunk ID for deduplication
+function generateChunkId(text, filename) {
+  return createHash('md5')
+    .update(`${filename}::${text}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
 export function chunkText(text, options = {}) {
   const chunkSizeTokens = options.chunkSizeTokens || DEFAULT_CHUNK_SIZE_TOKENS;
   const overlapTokens = options.overlapTokens || DEFAULT_OVERLAP_TOKENS;
 
-  if (!text || typeof text !== 'string') {
-    return [];
-  }
+  if (!text || typeof text !== 'string') return [];
 
   const chunkSizeChars = chunkSizeTokens * CHARS_PER_TOKEN;
   const overlapChars = overlapTokens * CHARS_PER_TOKEN;
@@ -26,45 +45,37 @@ export function chunkText(text, options = {}) {
   while (start < text.length) {
     let end = start + chunkSizeChars;
 
-    // Try to find a good break point
     if (end < text.length) {
       const breakPoints = ['. ', '.\n', '! ', '? ', '\n\n', '\n', ' '];
-      let bestBreak = -1;
-
-      // Look for break points in the last 20% of the chunk
       const searchStart = end - Math.floor(chunkSizeChars * 0.2);
 
       for (const breakpoint of breakPoints) {
         const idx = text.lastIndexOf(breakpoint, end);
         if (idx > searchStart && idx > start) {
-          bestBreak = idx + breakpoint.length;
+          end = idx + breakpoint.length;
           break;
         }
       }
-
-      if (bestBreak > start) {
-        end = bestBreak;
-      }
     }
 
-    const chunkText = text.slice(start, end).trim();
-    if (chunkText.length > 0) {
+    end = Math.min(end, text.length);
+    const chunkContent = text.slice(start, end).trim();
+
+    // Fix 6: Skip chunks below minimum size
+    if (chunkContent.length >= MIN_CHUNK_CHARS) {
       chunks.push({
-        text: chunkText,
-        tokenCount: estimateTokens(chunkText),
+        text: chunkContent,
+        tokenCount: estimateTokens(chunkContent),
         charStart: start,
         charEnd: end,
         chunkIndex: chunkIndex++
       });
     }
 
-    // Move to next chunk with overlap
-    start = end - overlapChars;
-    if (start <= chunks[chunks.length - 1]?.charStart) {
-      start = end;
-    }
+    // Fix 1: Correct overlap — only skip overlap if it would cause infinite loop
+    const nextStart = end - overlapChars;
+    start = nextStart > start ? nextStart : end;
 
-    // Safety check to prevent infinite loops
     if (chunkIndex > 10000) {
       console.warn('Chunk limit reached, stopping');
       break;
@@ -75,30 +86,48 @@ export function chunkText(text, options = {}) {
 }
 
 export function chunkPDFContent(pdfData, options = {}) {
-  const { filename, documentId, pageNumber, text } = pdfData;
+  const { filename, documentId, pageNumber, text, totalPages } = pdfData;
 
-  const textChunks = chunkText(text, options);
+  // Fix 3: Detect scanned/empty PDFs
+  if (!text || text.trim().length < 50) {
+    console.warn(`⚠️  ${filename} page ${pageNumber}: extracted text too short — may be a scanned page, skipping`);
+    return [];
+  }
 
-  return textChunks.map(chunk => ({
-    text: chunk.text,
-    metadata: {
-      document_id: documentId,
-      filename: filename,
-      chunk_id: `${documentId}_${chunk.chunkIndex}`,
-      chunk_index: chunk.chunkIndex,
-      page_number: pageNumber || 1,
-      section_title: extractSectionTitle(chunk.text),
-      source_type: 'pdf',
-      upload_timestamp: new Date().toISOString(),
-      token_start: chunk.charStart,
-      token_end: chunk.charEnd,
-      token_count: chunk.tokenCount
-    }
-  }));
+  // Fix 5: Clean text before chunking
+  const cleanedText = cleanText(text);
+
+  const textChunks = chunkText(cleanedText, options);
+
+  // Fix 7: Compute total_chunks and attach to all metadata
+  const totalChunks = textChunks.length;
+
+  return textChunks.map(chunk => {
+    // Fix 4: Use content hash as chunk ID for deduplication
+    const chunkId = generateChunkId(chunk.text, filename);
+
+    return {
+      text: chunk.text,
+      metadata: {
+        document_id: documentId,
+        filename: filename,
+        chunk_id: chunkId,
+        chunk_index: chunk.chunkIndex,
+        total_chunks: totalChunks,         // Fix 7
+        page_number: pageNumber || 1,      // Fix 2: caller must pass correct page
+        total_pages: totalPages || null,
+        section_title: extractSectionTitle(chunk.text),
+        source_type: 'pdf',
+        upload_timestamp: new Date().toISOString(),
+        char_start: chunk.charStart,
+        char_end: chunk.charEnd,
+        token_count: chunk.tokenCount
+      }
+    };
+  });
 }
 
 function extractSectionTitle(text) {
-  // Try to extract a potential section title from the beginning of the chunk
   const lines = text.split('\n').filter(l => l.trim());
   if (lines.length > 0) {
     const firstLine = lines[0].trim();
@@ -109,27 +138,4 @@ function extractSectionTitle(text) {
   return null;
 }
 
-export function mergeChunks(chunks, maxTokens = 7000) {
-  // Merge small chunks to reduce API calls
-  const merged = [];
-  let current = { texts: [], totalTokens: 0, metadata: [] };
-
-  for (const chunk of chunks) {
-    if (current.totalTokens + chunk.tokenCount <= maxTokens) {
-      current.texts.push(chunk.text);
-      current.metadata.push(chunk.metadata);
-      current.totalTokens += chunk.tokenCount;
-    } else {
-      if (current.texts.length > 0) {
-        merged.push({ texts: current.texts, metadata: current.metadata });
-      }
-      current = { texts: [chunk.text], metadata: [chunk.metadata], totalTokens: chunk.tokenCount };
-    }
-  }
-
-  if (current.texts.length > 0) {
-    merged.push({ texts: current.texts, metadata: current.metadata });
-  }
-
-  return merged;
-}
+// Fix 8: mergeChunks removed — was dead code from old broken batching strategy
