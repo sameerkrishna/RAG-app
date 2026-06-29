@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/ChatMessage.tsx","./src/components/SourceDrawer.tsx","./src/components/ui/Button.tsx","./src/hooks/useChat.ts","./src/hooks/useDocuments.ts","./src/lib/utils.ts","./src/pages/Assistant.tsx","./src/pages/KnowledgeBase.tsx","./src/types/index.ts"],"version":"5.9.3"}

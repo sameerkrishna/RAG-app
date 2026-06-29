@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83% 53%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83% 53%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .citation-chip {
+    @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full cursor-pointer
+           bg-primary/10 text-primary hover:bg-primary/20 transition-colors;
+  }
+
+  .coverage-badge {
+    @apply inline-flex items-center px-2 py-1 text-xs font-medium rounded-full;
+  }
+
+  .coverage-high {
+    @apply bg-success/10 text-success;
+  }
+
+  .coverage-medium {
+    @apply bg-warning/10 text-orange-600;
+  }
+
+  .coverage-low {
+    @apply bg-destructive/10 text-destructive;
+  }
+
+  .source-drawer {
+    @apply fixed right-0 top-0 h-full w-96 bg-background border-l shadow-lg
+           transform transition-transform duration-300 ease-in-out;
+  }
+
+  .source-drawer.closed {
+    @apply translate-x-full;
+  }
+
+  .source-drawer.open {
+    @apply translate-x-0;
+  }
+
+  .skeleton {
+    @apply animate-pulse bg-muted rounded;
+  }
+
+  .streaming-text {
+    @apply relative;
+  }
+
+  .streaming-text::after {
+    content: '\25A0';
+    @apply inline-block w-1 ml-0.5 animate-pulse;
+  }
+}
