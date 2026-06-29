@@ -33,9 +33,8 @@ export interface ChatMessage {
 }
 
 export interface CoverageInfo {
-  level: 'high' | 'medium' | 'low';
-  score: number;
-  reason?: string;
+  confidence: number;   // 0–100, e.g. 47
+  topScore: number;     // raw score e.g. 0.47
 }
 
 export interface Document {
