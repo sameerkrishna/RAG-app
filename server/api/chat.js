@@ -125,7 +125,7 @@ Rules:
 - Cite sources inline as [1], [2] only for context chunks you actually used
 - Always cite as separate brackets [1] [2], never as [1, 2]
 - Never add citation numbers you did not use
-- For greetings or small talk, respond naturally without citations
+- For greetings or small talk, respond naturally and briefly — do NOT mention the knowledge base topic, do NOT reference any documents, do NOT add citations
 - If context is irrelevant, decline politely with no citations`;
 
     let fullResponse = '';
