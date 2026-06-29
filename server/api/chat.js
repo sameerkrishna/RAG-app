@@ -101,7 +101,7 @@ export async function handleChatStream(req, res) {
       .join('\n\n');
 
     const prompt = `You are an AI Knowledge Assistant. Answer ONLY using the numbered context below.
-If the answer is not in the context, respond with exactly: "The provided context does not contain information about this topic." Do NOT answer from general knowledge. Do NOT include citation numbers if you cannot find the answer in context.
+If the answer is not in the context, politely say you don't have information on that topic in your knowledge base. Do NOT answer from general knowledge. Do NOT add citations if the context is not relevant.
 
 CONTEXT:
 ${contextText}
@@ -113,8 +113,9 @@ CURRENT QUESTION: ${query}
 
 Rules:
 - Cite sources inline as [1], [2] only for context chunks you actually used
-- Never invent citation numbers not present in the context above
-- If context is irrelevant, output the exact refusal message with no citations`;
+- Never add citation numbers you did not use
+- For greetings or small talk, respond naturally without citations
+- If context is irrelevant, decline politely with no citations`;
 
     let fullResponse = '';
 
