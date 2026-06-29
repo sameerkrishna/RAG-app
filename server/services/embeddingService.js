@@ -3,8 +3,7 @@ import { EmbeddingError, is429Error } from '../utils/errors.js';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const embeddingModel = genAI.getGenerativeModel({
-  // ✅ FIX 1: Correct model name — 'gemini-embedding-2' does not exist
-  model: process.env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004'
+  model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2'
 });
 
 const rateLimitState = {
@@ -20,6 +19,7 @@ function estimateTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
+// ✅ FIX 3: Accept tokens param so callers can track usage accurately
 async function waitForRateLimit(tokens = 0) {
   const now = Date.now();
   const windowElapsed = now - rateLimitState.windowStart;
@@ -38,7 +38,7 @@ async function waitForRateLimit(tokens = 0) {
     rateLimitState.windowStart = Date.now();
   }
 
-  // ✅ FIX 3: Track tokens for this call so rate limiting is accurate
+  // ✅ FIX 3: Increment token count for this call
   rateLimitState.tokenCount += tokens;
 }
 
@@ -92,9 +92,8 @@ export async function generateEmbeddings(chunks) {
       await new Promise(resolve => setTimeout(resolve, 60000));
     }
 
-    // ✅ FIX 2: Removed the pointless embedBatch() call — embed each chunk
-    // individually directly. The old code called embedBatch() then threw
-    // the result away and re-embedded everything individually anyway.
+    // ✅ FIX 2: Removed embedBatch() — it was called and discarded, then
+    // every chunk was re-embedded individually anyway. Now embed directly.
     const batchPromises = batch.flatMap(group =>
       group.map(async (chunk) => {
         const tokens = estimateTokens(chunk.text);
@@ -124,13 +123,14 @@ export async function generateEmbeddings(chunks) {
 }
 
 export async function embedQuery(query) {
+  // ✅ FIX 3: Track tokens so rate limit state stays accurate
   const tokens = estimateTokens(query);
-  // ✅ FIX 3: Pass token count so rate limit state stays accurate
   await waitForRateLimit(tokens);
   return embedWithRetry(query);
 }
 
 export async function embedSingle(text) {
+  // ✅ FIX 3: Track tokens so rate limit state stays accurate
   const tokens = estimateTokens(text);
   await waitForRateLimit(tokens);
   return embedWithRetry(text);
