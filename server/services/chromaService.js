@@ -237,7 +237,7 @@ export async function cleanupSessionCollections() {
 
     const sessionCollectionNames = collections.filter(c => c.startsWith('session_'));
     console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
-);
+
 
     if (sessionCollectionNames.length === 0) {
       console.log('✅ No stale session collections found.');
