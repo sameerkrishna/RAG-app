@@ -77,17 +77,17 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
           </div>
         )}
 
-        {/* Coverage Badge */}
-        {!isUser && message.coverage && (
-          <span className={cn(
-            'coverage-badge mt-2',
-            message.coverage.level === 'high' && 'coverage-high',
-            message.coverage.level === 'medium' && 'coverage-medium',
-            message.coverage.level === 'low' && 'coverage-low'
-          )}>
-            {message.coverage.score.toFixed(0)}% confidence
-          </span>
-        )}
+       {/* Coverage Badge */}
+{!isUser && message.coverage && message.coverage.score > 0 && (
+  <span className={cn(
+    'coverage-badge mt-2',
+    message.coverage.level === 'high' && 'coverage-high',
+    message.coverage.level === 'medium' && 'coverage-medium',
+    message.coverage.level === 'low' && 'coverage-low'
+  )}>
+    {Math.round(message.coverage.score * 100)}% confidence
+  </span>
+)}
 
         {/* Action buttons for assistant messages */}
         {!isUser && message.content && !message.isStreaming && (
