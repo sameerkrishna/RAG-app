@@ -2,7 +2,17 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { buildPrompt, getRefusalResponse } from './promptService.js';
 import { LLMUnavailableError } from '../utils/errors.js';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// ✅ Lazy — read inside the function, not at module top level
+let genAI = null;
+
+function getGenAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('GEMINI_API_KEY is undefined');
+    genAI = new GoogleGenerativeAI(apiKey);
+  }
+  return genAI;
+}
 
 const PRIMARY_MODEL = process.env.GEMINI_MODEL_PRIMARY || 'gemini-2.0-flash-lite';
 const FALLBACK_MODEL = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.0-flash';
