@@ -77,7 +77,7 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
           </div>
         )}
 
-       {/* Coverage Badge */}
+      {/* Coverage Badge */}
 {!isUser && message.coverage && message.coverage.score > 0 && (
   <span className={cn(
     'coverage-badge mt-2',
