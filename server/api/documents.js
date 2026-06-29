@@ -264,14 +264,39 @@ export async function deleteDocument(req, res) {
 
 export async function getDocumentFile(req, res) {
   const { documentId } = req.params;
+
   try {
-    const filePath = path.join(uploadDir, `${documentId}.pdf`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Document file not found', code: 'FILE_NOT_FOUND' });
+    // Step 1: session upload — /tmp/uploads/<uuid>.pdf
+    const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
+    if (fs.existsSync(uploadPath)) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${documentId}.pdf"`);
+      return fs.createReadStream(uploadPath).pipe(res);
     }
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
-    fs.createReadStream(filePath).pipe(res);
+
+    // Step 2: seed doc — exact name match in project root
+    const exactSeedPath = path.join(seedDir, `${documentId}.pdf`);
+    if (fs.existsSync(exactSeedPath)) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${documentId}.pdf"`);
+      return fs.createReadStream(exactSeedPath).pipe(res);
+    }
+
+    // Step 3: seed doc — fuzzy scan project root for PDF whose name contains documentId
+    const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
+    const match = allPdfs.find(f =>
+      path.parse(f).name === documentId || f.includes(documentId)
+    );
+
+    if (match) {
+      const matchPath = path.join(seedDir, match);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${match}"`);
+      return fs.createReadStream(matchPath).pipe(res);
+    }
+
+    return res.status(404).json({ error: 'Document file not found', code: 'FILE_NOT_FOUND' });
+
   } catch (error) {
     console.error('Get document file error:', error);
     res.status(500).json({ error: 'Failed to retrieve document', code: 'RETRIEVE_ERROR' });
