@@ -21,6 +21,8 @@ import { getOrCreateSession, canAcceptUpload, addDocumentToSession, removeDocume
 const router = Router();
 
 const uploadDir = '/tmp/uploads';
+const seedDir = process.cwd();
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
