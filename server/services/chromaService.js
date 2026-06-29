@@ -1,46 +1,35 @@
-import { CloudClient } from "chromadb"; // ✅ Use CloudClient, not ChromaClient
+import { CloudClient } from "chromadb";
 import { v4 as uuidv4 } from 'uuid';
 
-const chromaConfig = {
-  apiKey: process.env.CHROMA_API_KEY,
-  tenant: process.env.CHROMA_TENANT || 'default_tenant',
-  database: process.env.CHROMA_DATABASE || 'default_database',
-  // Only needed if connecting to a non-default region (e.g., GCP europe-west1)
-  host: process.env.CHROMA_HOST || undefined,
-};
-
-// --- RUNTIME DEBUG LOGS ---
-console.log("---- CHROMA CONNECTIVITY DEBUG ----");
-console.log("Host:      ", chromaConfig.host || "api.trychroma.com (default)");
-console.log("Tenant:    ", chromaConfig.tenant);
-console.log("DB Name:   ", chromaConfig.database);
-console.log("API Key:   ", chromaConfig.apiKey ? "LOADED (VALID)" : "MISSING (UNDEFINED)");
-console.log("-----------------------------------");
-
+// ✅ No top-level process.env reads — everything is lazy inside getClient()
 let client = null;
 let globalCollection = null;
 const sessionCollections = new Map();
 
 function getClient() {
   if (!client) {
-    if (!chromaConfig.apiKey) {
+    // ✅ Read env here — dotenv is guaranteed to have loaded by request time
+    const apiKey = process.env.CHROMA_API_KEY;
+    const tenant = process.env.CHROMA_TENANT || 'default_tenant';
+    const database = process.env.CHROMA_DATABASE || 'default_database';
+    const host = process.env.CHROMA_HOST || undefined;
+
+    console.log("---- CHROMA CONNECTIVITY DEBUG ----");
+    console.log("Host:      ", host || "api.trychroma.com (default)");
+    console.log("Tenant:    ", tenant);
+    console.log("DB Name:   ", database);
+    console.log("API Key:   ", apiKey ? "LOADED (VALID)" : "MISSING (UNDEFINED)");
+    console.log("-----------------------------------");
+
+    if (!apiKey) {
       throw new Error(
         "CRITICAL ERROR: CHROMA_API_KEY is undefined. " +
         "Ensure your environment variables are correctly loaded before executing this file."
       );
     }
 
-    // ✅ CloudClient handles auth internally — just pass apiKey, tenant, and database
-    const clientOptions = {
-      apiKey: chromaConfig.apiKey,
-      tenant: chromaConfig.tenant,
-      database: chromaConfig.database,
-    };
-
-    // Only add host if connecting to a non-default region
-    if (chromaConfig.host) {
-      clientOptions.host = chromaConfig.host;
-    }
+    const clientOptions = { apiKey, tenant, database };
+    if (host) clientOptions.host = host;
 
     client = new CloudClient(clientOptions);
   }
