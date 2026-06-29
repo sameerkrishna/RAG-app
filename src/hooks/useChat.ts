@@ -84,19 +84,28 @@ export function useChat(sessionId: string) {
 
               // ✅ FIX: Use currentEventName (from "event:" line) to branch
               if (currentEventName === 'token' && payload.text) {
-                  // Drip each character with a small delay for natural typewriter feel
-                const chars = payload.text.split('');
-                for (const char of chars) {
-                  accumulatedText += char;
+                // Split chunk into words
+                const words = payload.text.split(/(\s+)/); // preserves spaces as tokens
+              
+                let i = 0;
+                while (i < words.length) {
+                  // Pick random group size 1–10 words
+                  const groupSize = Math.floor(Math.random() * 10) + 1;
+                  const group = words.slice(i, i + groupSize).join('');
+                  i += groupSize;
+              
+                  accumulatedText += group;
                   setMessages(prev => prev.map(m =>
                     m.id === assistantMessageId
                       ? { ...m, content: accumulatedText }
                       : m
                   ));
-                  await new Promise(resolve => setTimeout(resolve, 5));
-                }
-
-              } else if (currentEventName === 'complete') {
+              
+                  // Random delay 20–90ms between groups
+                  const delay = Math.floor(Math.random() * 71) + 20;
+                  await new Promise(resolve => setTimeout(resolve, delay));
+              
+                            } else if (currentEventName === 'complete') {
                 citations = payload.citations || [];
                 coverage = payload.coverage;
                 sources = payload.sources || [];
