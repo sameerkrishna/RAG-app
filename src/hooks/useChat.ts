@@ -106,7 +106,7 @@ export function useChat(sessionId: string) {
                   await new Promise(resolve => setTimeout(resolve, delay));
                 }
               
-                            } else if (currentEventName === 'complete') {
+              } else if (currentEventName === 'complete') {
                 citations = payload.citations || [];
                 coverage = payload.coverage;
                 sources = payload.sources || [];
