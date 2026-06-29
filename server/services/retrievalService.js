@@ -5,6 +5,32 @@ import { v4 as uuidv4 } from 'uuid';
 const TOP_K = parseInt(process.env.TOP_K) || 5;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
 
+// Cache resolved collection objects — never hit Chroma more than once per session
+let cachedGlobalCollection = null;
+const cachedSessionCollections = new Map();
+
+async function getOrCacheGlobalCollection() {
+  if (!cachedGlobalCollection) {
+    cachedGlobalCollection = await getGlobalCollection();
+  }
+  return cachedGlobalCollection;
+}
+
+async function getOrCacheSessionCollection(sessionId) {
+  if (cachedSessionCollections.has(sessionId)) {
+    return cachedSessionCollections.get(sessionId);
+  }
+  try {
+    const collection = await getSessionCollection(sessionId);
+    if (collection) {
+      cachedSessionCollections.set(sessionId, collection);
+    }
+    return collection;
+  } catch {
+    return null;
+  }
+}
+
 function calculateCoverage(results, topK = TOP_K) {
   if (!results || results.length === 0) {
     return { confidence: 0, topScore: 0 };
@@ -24,32 +50,36 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
   const includeGlobal = options.includeGlobal !== false;
 
   try {
-    const queryEmbedding = await embedQuery(query);
-    const queries = [];
+    // Run embedding + both collection fetches in parallel
+    const [queryEmbedding, globalCollection, sessionCollection] = await Promise.all([
+      embedQuery(query),
+      includeGlobal ? getOrCacheGlobalCollection() : Promise.resolve(null),
+      sessionId ? getOrCacheSessionCollection(sessionId) : Promise.resolve(null)
+    ]);
 
-    if (includeGlobal) {
-      const globalCollection = await getGlobalCollection();
-      queries.push({ type: 'global', promise: queryCollection(globalCollection, queryEmbedding, topK) });
+    // Query both collections in parallel
+    const queryPromises = [];
+
+    if (globalCollection) {
+      queryPromises.push(
+        queryCollection(globalCollection, queryEmbedding, topK)
+          .then(results => ({ type: 'global', results }))
+          .catch(() => ({ type: 'global', results: [] }))
+      );
     }
 
-    if (sessionId) {
-      try {
-        const sessionCollection = await getSessionCollection(sessionId);
-        if (sessionCollection) {
-          queries.push({ type: 'session', promise: queryCollection(sessionCollection, queryEmbedding, topK) });
-        }
-      } catch (e) {
-        // Session collection doesn't exist yet — ok
-      }
+    if (sessionCollection) {
+      queryPromises.push(
+        queryCollection(sessionCollection, queryEmbedding, topK)
+          .then(results => ({ type: 'session', results }))
+          .catch(() => ({ type: 'session', results: [] }))
+      );
     }
 
-    const results = await Promise.all(queries.map(async q => ({
-      type: q.type,
-      results: await q.promise
-    })));
+    const queryResults = await Promise.all(queryPromises);
 
     const allResults = [];
-    for (const { type, results: typeResults } of results) {
+    for (const { type, results: typeResults } of queryResults) {
       for (const result of typeResults) {
         allResults.push({ ...result, source_type: type });
       }
@@ -60,10 +90,17 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
     const coverage = calculateCoverage(topResults, topK);
 
     return { results: topResults, coverage, queryEmbedding };
+
   } catch (error) {
     console.error('Retrieval error:', error);
     throw error;
   }
+}
+
+// Call this after a user uploads a document to a session
+// so the next query fetches the updated collection fresh
+export function invalidateSessionCollectionCache(sessionId) {
+  cachedSessionCollections.delete(sessionId);
 }
 
 export function formatContextForPrompt(results, maxTokens = 7000) {
@@ -103,7 +140,7 @@ export function generateCitations(results) {
   }));
 }
 
-// Refuse only if top score is genuinely near-zero
+// Refuse only if top score is genuinely near-zero — no relevant content at all
 export function shouldShowRefusal(coverage) {
   return coverage.topScore < REFUSAL_THRESHOLD;
 }
