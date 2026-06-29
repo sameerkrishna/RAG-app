@@ -235,7 +235,7 @@ export async function cleanupSessionCollections() {
     const collections = await client.listCollections();
     console.log('RAW collections:', JSON.stringify(collections));
 
-    const sessionCollectionNames = collections.filter(c => c.startsWith('session_')
+    const sessionCollectionNames = collections.filter(c => c.startsWith('session_');
     console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
 );
 
