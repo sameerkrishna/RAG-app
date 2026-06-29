@@ -88,6 +88,7 @@ export function addTurnWithCitations(sessionId, role, content, citations = [], c
     hasCitations: citations.length > 0
   });
 }
+
 export function getLastUserMessage(sessionId) {
   const memory = getMemory(sessionId);
   for (let i = memory.turns.length - 1; i >= 0; i--) {
