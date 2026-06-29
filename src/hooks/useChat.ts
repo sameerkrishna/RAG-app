@@ -93,8 +93,8 @@ export function useChat(sessionId: string) {
                       ? { ...m, content: accumulatedText }
                       : m
                   ));
-                  await new Promise(resolve => setTimeout(resolve, 30));
-                ));
+                  await new Promise(resolve => setTimeout(resolve, 18));
+                
 
               } else if (currentEventName === 'complete') {
                 citations = payload.citations || [];
