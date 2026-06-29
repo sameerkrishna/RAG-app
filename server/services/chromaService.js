@@ -226,3 +226,42 @@ export async function healthCheck() {
     };
   }
 }
+
+export async function cleanupSessionCollections() {
+  try {
+    const client = getClient();
+    
+    // List all collections in Chroma Cloud
+    const collections = await client.listCollections();
+    
+    const sessionCollectionNames = collections.filter(c => 
+      c.name.startsWith('session_')
+    );
+
+    if (sessionCollectionNames.length === 0) {
+      console.log('✅ No stale session collections found.');
+      return;
+    }
+
+    console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
+
+    await Promise.allSettled(
+      sessionCollectionNames.map(async c => {
+        try {
+          await client.deleteCollection({ name: c.name });
+          console.log(`  ✅ Deleted: ${c.name}`);
+        } catch (err) {
+          console.warn(`  ⚠️ Could not delete ${c.name}:`, err.message);
+        }
+      })
+    );
+
+    // Clear local cache too
+    sessionCollections.clear();
+
+    console.log('✅ Session collection cleanup complete.');
+  } catch (error) {
+    // Don't crash startup if cleanup fails
+    console.warn('⚠️ Session cleanup failed (non-fatal):', error.message);
+  }
+}
