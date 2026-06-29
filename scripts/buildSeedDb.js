@@ -153,4 +153,4 @@ buildSeedDatabase()
   .catch(err => {
     console.error('\nBuild failed:', err);
     process.exit(1);
-  });
+  });    
