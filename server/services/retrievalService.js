@@ -164,8 +164,10 @@ export function generateCitations(results) {
   }));
 }
 
+// ✅ After — only refuse if results exist but are irrelevant
 export function shouldShowRefusal(coverage) {
-  return coverage.level === 'low';
+  return coverage.level === 'low' && coverage.score > 0;
 }
+
 
 export { calculateCoverage };
