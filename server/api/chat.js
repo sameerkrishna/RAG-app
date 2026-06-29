@@ -91,8 +91,7 @@ ${memoryContext ? `CONVERSATION HISTORY:\n${memoryContext}\n\n` : ''}CURRENT QUE
 RULES:
 - For greetings or small talk (e.g. "hi", "hello", "how are you"), respond briefly and warmly.
 - For ANY factual, technical, or knowledge-based question, do NOT attempt to answer it. Instead, tell the user that no documents have been uploaded yet and invite them to upload relevant documents so you can provide a grounded answer.
-- Never write code, explain general concepts, or answer from your own training knowledge.
-- Keep responses short.`;
+- Never write code, explain general concepts, or answer from your own training knowledge.`;
 }
 
     let fullResponse = '';
