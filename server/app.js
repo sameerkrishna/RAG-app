@@ -10,11 +10,20 @@ import documentsRouter from './api/documents.js';
 import chatRouter from './api/chat.js';
 import feedbackRouter from './api/feedback.js';
 import searchRouter from './api/search.js';
+import { cleanupSessionCollections } from './services/chromaService.js'; // ✅ add this
 
 const app = express();
 
 // Progress callbacks
 app.locals.progressCallbacks = new EventEmitter();
+
+// ✅ Clean up stale session collections from previous runs on startup
+// Run async, non-blocking — server starts immediately, cleanup happens in background
+cleanupSessionCollections().then(() => {
+  console.log('🚀 Server ready.');
+}).catch(err => {
+  console.warn('⚠️ Startup cleanup error (non-fatal):', err.message);
+});
 
 // Middleware
 app.use(cors({
