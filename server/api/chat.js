@@ -13,6 +13,32 @@ const GREETING_PATTERN = /^(hi|hello|hey|thanks|thank you|bye|ok|okay|cool|great
 // Fix 4: Detect when LLM says it can't answer from context
 const OUT_OF_SCOPE_PATTERN = /don't have information|do not have information|not in my knowledge|can't find|cannot find|no information|knowledge base doesn't|not covered|outside.*knowledge/i;
 
+
+function expandQuery(query, sessionId) {
+  const words = query.trim().split(/\s+/);
+  if (words.length > 4) return query;
+
+  const recentTurns = getRecentTurns(sessionId, 4);
+  const recentContext = recentTurns
+    .filter(t => t.role === 'user')
+    .map(t => t.content)
+    .join(' ');
+
+  const expansions = [
+    'definition', 'overview', 'role', 'responsibilities',
+    'examples', 'key concepts', 'how it works', 'purpose'
+  ];
+
+  const queryWords = query.toLowerCase().split(/\s+/);
+  const contextRelevant = queryWords.some(w =>
+    w.length > 3 && recentContext.toLowerCase().includes(w)
+  );
+
+  const domainHint = contextRelevant ? `${recentContext.slice(0, 80)}: ` : '';
+
+  return `${domainHint}${query} ${expansions.join(' ')}`;
+}
+
 export async function handleChatStream(req, res) {
   const { query, sessionId: providedSessionId } = req.body;
 
