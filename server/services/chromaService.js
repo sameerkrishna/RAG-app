@@ -1,14 +1,14 @@
-import { CloudClient } from "chromadb";
+import { CloudClient, EphemeralClient } from 'chromadb';
 import { v4 as uuidv4 } from 'uuid';
 
-// ✅ No top-level process.env reads — everything is lazy inside getClient()
-let client = null;
+// ✅ Two separate clients — Cloud for seed docs, Ephemeral (in-memory) for session uploads
+let cloudClient = null;
+let ephemeralClient = null;
 let globalCollection = null;
 const sessionCollections = new Map();
 
-function getClient() {
-  if (!client) {
-    // ✅ Read env here — dotenv is guaranteed to have loaded by request time
+function getCloudClient() {
+  if (!cloudClient) {
     const apiKey = process.env.CHROMA_API_KEY;
     const tenant = process.env.CHROMA_TENANT || 'default_tenant';
     const database = process.env.CHROMA_DATABASE || 'default_database';
@@ -31,14 +31,22 @@ function getClient() {
     const clientOptions = { apiKey, tenant, database };
     if (host) clientOptions.host = host;
 
-    client = new CloudClient(clientOptions);
+    cloudClient = new CloudClient(clientOptions);
   }
-  return client;
+  return cloudClient;
+}
+
+function getEphemeralClient() {
+  if (!ephemeralClient) {
+    // ✅ Pure in-memory — never touches Chroma Cloud, wiped on server restart
+    ephemeralClient = new EphemeralClient();
+  }
+  return ephemeralClient;
 }
 
 export async function getGlobalCollection() {
   if (!globalCollection) {
-    const client = getClient();
+    const client = getCloudClient();
     const collectionName = process.env.CHROMA_GLOBAL_COLLECTION || 'dev';
 
     try {
@@ -49,17 +57,22 @@ export async function getGlobalCollection() {
           type: 'global_knowledge'
         }
       });
+      console.log(`✅ Global collection ready: ${collectionName}`);
     } catch (error) {
-      console.error('Failed to create global collection:', error);
+      console.error('Failed to connect to global collection:', error);
       throw error;
     }
   }
-  console.log("created global db");
   return globalCollection;
 }
 
-export async function createSessionCollection(sessionId) {
-  const client = getClient();
+export async function getSessionCollection(sessionId) {
+  if (sessionCollections.has(sessionId)) {
+    return sessionCollections.get(sessionId);
+  }
+
+  // ✅ In-memory only — isolated per session, never stored in Chroma Cloud
+  const client = getEphemeralClient();
   const collectionName = `session_${sessionId}`;
 
   try {
@@ -73,7 +86,7 @@ export async function createSessionCollection(sessionId) {
     });
 
     sessionCollections.set(sessionId, collection);
-    console.log("created session db");
+    console.log(`✅ Session collection created in-memory: ${collectionName}`);
     return collection;
   } catch (error) {
     console.error(`Failed to create session collection ${collectionName}:`, error);
@@ -81,20 +94,14 @@ export async function createSessionCollection(sessionId) {
   }
 }
 
-export async function getSessionCollection(sessionId) {
-  if (sessionCollections.has(sessionId)) {
-    return sessionCollections.get(sessionId);
-  }
-  return createSessionCollection(sessionId);
-}
-
 export async function deleteSessionCollection(sessionId) {
-  const client = getClient();
   const collectionName = `session_${sessionId}`;
 
   try {
+    const client = getEphemeralClient();
     await client.deleteCollection({ name: collectionName });
     sessionCollections.delete(sessionId);
+    console.log(`✅ Session collection deleted: ${collectionName}`);
     return true;
   } catch (error) {
     console.error(`Failed to delete session collection ${collectionName}:`, error);
@@ -149,9 +156,7 @@ export async function deleteDocumentVectors(collection, documentId) {
     });
 
     if (existing.ids && existing.ids.length > 0) {
-      await collection.delete({
-        ids: existing.ids
-      });
+      await collection.delete({ ids: existing.ids });
       return existing.ids.length;
     }
     return 0;
@@ -163,8 +168,7 @@ export async function deleteDocumentVectors(collection, documentId) {
 
 export async function getDocumentCount(collection) {
   try {
-    const count = await collection.count();
-    return count;
+    return await collection.count();
   } catch (error) {
     console.error('Failed to get document count:', error);
     return 0;
@@ -211,7 +215,7 @@ export async function listDocuments(collection) {
 
 export async function healthCheck() {
   try {
-    const client = getClient();
+    const client = getCloudClient();
     const heartbeat = await client.heartbeat();
     return {
       status: 'healthy',
@@ -224,45 +228,5 @@ export async function healthCheck() {
       error: error.message,
       timestamp: new Date().toISOString()
     };
-  }
-}
-
-export async function cleanupSessionCollections() {
-  try {
-    const client = getClient();
-    
-    // List all collections in Chroma Cloud
-    const collections = await client.listCollections();
-    console.log('RAW collections:', JSON.stringify(collections));
-
-    const sessionCollectionNames = collections.filter(c => c.startsWith('session_'));
-    console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
-
-
-    if (sessionCollectionNames.length === 0) {
-      console.log('✅ No stale session collections found.');
-      return;
-    }
-
-    console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
-
-    await Promise.allSettled(
-  sessionCollectionNames.map(async collectionName => {
-    try {
-      await client.deleteCollection({ name: collectionName });
-      console.log(`  ✅ Deleted: ${collectionName}`);
-    } catch (err) {
-      console.warn(`  ⚠️ Could not delete ${collectionName}:`, err.message);
-    }
-  })
-);
-
-    // Clear local cache too
-    sessionCollections.clear();
-
-    console.log('✅ Session collection cleanup complete.');
-  } catch (error) {
-    // Don't crash startup if cleanup fails
-    console.warn('⚠️ Session cleanup failed (non-fatal):', error.message);
   }
 }
