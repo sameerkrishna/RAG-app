@@ -11,7 +11,6 @@ export function useChat(sessionId: string) {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
-    // Add user message
     setMessages(prev => [...prev, {
       id: userMessageId,
       role: 'user',
@@ -19,7 +18,6 @@ export function useChat(sessionId: string) {
       timestamp: new Date()
     }]);
 
-    // Add placeholder assistant message
     setMessages(prev => [...prev, {
       id: assistantMessageId,
       role: 'assistant',
@@ -31,7 +29,6 @@ export function useChat(sessionId: string) {
     setError(null);
     setIsLoading(true);
 
-    // Create abort controller
     abortControllerRef.current = new AbortController();
 
     try {
@@ -59,70 +56,86 @@ export function useChat(sessionId: string) {
       let citations: Citation[] = [];
       let coverage: CoverageInfo | undefined;
       let sources: SearchResult[] = [];
-      let isRefusal = false;
+      let buffer = '';
+      // ✅ FIX: Track current event name from the "event:" line
+      let currentEventName = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        // ✅ FIX: Buffer chunks — a chunk boundary may split an SSE line mid-way
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        // Keep the last (possibly incomplete) line in the buffer
+        buffer = lines.pop() ?? '';
 
         for (const line of lines) {
-          if (line.startsWith('event: ')) continue;
+          if (line.startsWith('event: ')) {
+            // ✅ FIX: Capture the event name instead of skipping it
+            currentEventName = line.slice(7).trim();
+            continue;
+          }
+
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             try {
-              const event = JSON.parse(data);
+              const payload = JSON.parse(data);
 
-              if (event.type === 'token' && event.text) {
-                accumulatedText += event.text;
+              // ✅ FIX: Use currentEventName (from "event:" line) to branch
+              if (currentEventName === 'token' && payload.text) {
+                accumulatedText += payload.text;
                 setMessages(prev => prev.map(m =>
                   m.id === assistantMessageId
                     ? { ...m, content: accumulatedText }
                     : m
                 ));
-              } else if (event.type === 'complete') {
-                // Final update
-                citations = event.citations || [];
-                coverage = event.coverage;
-                sources = event.sources || [];
-                isRefusal = event.action === 'refusal';
+
+              } else if (currentEventName === 'complete') {
+                citations = payload.citations || [];
+                coverage = payload.coverage;
+                sources = payload.sources || [];
+                const isRefusal = payload.action === 'refusal';
 
                 setMessages(prev => prev.map(m =>
                   m.id === assistantMessageId
                     ? {
-                      ...m,
-                      content: event.response || accumulatedText,
-                      citations,
-                      coverage,
-                      sources,
-                      isRefusal,
-                      isStreaming: false
-                    }
+                        ...m,
+                        content: payload.response || accumulatedText,
+                        citations,
+                        coverage,
+                        sources,
+                        isRefusal,
+                        isStreaming: false
+                      }
                     : m
                 ));
-              } else if (event.type === 'error') {
-                setError(event.message);
+
+              } else if (currentEventName === 'error') {
+                setError(payload.message);
                 setMessages(prev => prev.map(m =>
                   m.id === assistantMessageId
-                    ? { ...m, content: event.message, isStreaming: false }
+                    ? { ...m, content: payload.message, isStreaming: false }
                     : m
                 ));
-              } else if (event.type === 'retrieval') {
+
+              } else if (currentEventName === 'retrieval') {
                 coverage = {
-                  level: event.coverage,
-                  score: event.coverageScore
+                  level: payload.coverage,
+                  score: payload.coverageScore
                 };
               }
+
+              // Reset after consuming a data line
+              currentEventName = '';
+
             } catch (e) {
-              // Ignore parse errors
+              // Ignore parse errors on malformed lines
             }
           }
         }
       }
 
-      // Ensure streaming is marked as done
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? { ...m, isStreaming: false }
@@ -141,10 +154,10 @@ export function useChat(sessionId: string) {
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? {
-            ...m,
-            content: 'I encountered an error. Please try again.',
-            isStreaming: false
-          }
+              ...m,
+              content: 'I encountered an error. Please try again.',
+              isStreaming: false
+            }
           : m
       ));
     } finally {
