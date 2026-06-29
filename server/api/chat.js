@@ -168,7 +168,7 @@ export async function getSources(req, res) {
   const { answerId } = req.params;
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
-  const recentTurns = getRecentTurns(sessionId, 20);
+  const recentTurns = getRecentTurns(sessionId, 10);
 
   // Strict match by answerId first
   const exactMatch = recentTurns.find(t => t.id === answerId);
