@@ -93,7 +93,7 @@ export function useChat(sessionId: string) {
                       ? { ...m, content: accumulatedText }
                       : m
                   ));
-                  await new Promise(resolve => setTimeout(resolve, 20));
+                  await new Promise(resolve => setTimeout(resolve, 5));
                 }
 
               } else if (currentEventName === 'complete') {
