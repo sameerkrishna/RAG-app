@@ -3,7 +3,7 @@ import { WebSearchUnavailableError } from '../utils/errors.js';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const PRIMARY_MODEL = process.env.GEMINI_MODEL_PRIMARY || 'gemini-2.0-flash-lite';
+const PRIMARY_MODEL = process.env.GEMINI_MODEL_PRIMARY || 'gemini-3.1-flash-lite';
 
 let model = null;
 
