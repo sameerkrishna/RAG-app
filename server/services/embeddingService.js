@@ -129,3 +129,11 @@ export async function embedQuery(query) {
 export async function embedSingle(text) {
   return embedSingleChunk(text, 'RETRIEVAL_DOCUMENT');
 }
+
+export function getRateLimitState() {
+  return {
+    maxTokensPerMinute: parseInt(process.env.EMBEDDING_RATE_LIMIT_TOKENS_PER_MINUTE) || 30000,
+    parallelCalls: PARALLEL_CALLS(),
+    maxChunksPerCall: BATCH_SIZE(),
+  };
+}
