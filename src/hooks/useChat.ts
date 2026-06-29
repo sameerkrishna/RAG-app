@@ -104,6 +104,7 @@ export function useChat(sessionId: string) {
                   // Random delay 20–90ms between groups
                   const delay = Math.floor(Math.random() * 71) + 20;
                   await new Promise(resolve => setTimeout(resolve, delay));
+                }
               
                             } else if (currentEventName === 'complete') {
                 citations = payload.citations || [];
