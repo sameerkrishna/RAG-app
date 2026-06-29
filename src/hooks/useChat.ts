@@ -120,10 +120,11 @@ export function useChat(sessionId: string) {
                 ));
 
               } else if (currentEventName === 'retrieval') {
-                coverage = {
-                  level: payload.coverage,
-                  score: payload.coverageScore
-                };
+                 coverage = {
+    confidence: payload.confidence,
+    topScore: payload.topScore
+  };
+                
               }
 
               // Reset after consuming a data line
