@@ -78,14 +78,9 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
         )}
 
       {/* Coverage Badge */}
-{!isUser && message.coverage && message.coverage.score > 0 && (
-  <span className={cn(
-    'coverage-badge mt-2',
-    message.coverage.level === 'high' && 'coverage-high',
-    message.coverage.level === 'medium' && 'coverage-medium',
-    message.coverage.level === 'low' && 'coverage-low'
-  )}>
-    {Math.round(message.coverage.score * 100)}% confidence
+{!isUser && message.coverage && message.coverage.confidence > 0 && (
+  <span className="mt-2 text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">
+    {message.coverage.confidence}% confidence
   </span>
 )}
 
