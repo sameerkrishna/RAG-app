@@ -83,7 +83,9 @@ export async function handleChatStream(req, res) {
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    const { results, coverage } = await retrieveForQuery(query, sessionId, { topK: 5 });
+    // NEW
+    const expandedQuery = expandQuery(query, sessionId);
+    const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
 
     sendEvent('retrieval', {
       results: results.length,
