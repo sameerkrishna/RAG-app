@@ -236,6 +236,7 @@ export async function cleanupSessionCollections() {
     console.log('RAW collections:', JSON.stringify(collections));
 
     const sessionCollectionNames = collections.filter(c => c.startsWith('session_')
+    console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
 );
 
     if (sessionCollectionNames.length === 0) {
@@ -246,16 +247,15 @@ export async function cleanupSessionCollections() {
     console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
 
     await Promise.allSettled(
-      sessionCollectionNames.map(async c => {
-        try {
-          await client.deleteCollection(name);
-
-          console.log(`  ✅ Deleted: ${c.name}`);
-        } catch (err) {
-          console.warn(`  ⚠️ Could not delete ${c.name}:`, err.message);
-        }
-      })
-    );
+  sessionCollectionNames.map(async collectionName => {
+    try {
+      await client.deleteCollection(collectionName);
+      console.log(`  ✅ Deleted: ${collectionName}`);
+    } catch (err) {
+      console.warn(`  ⚠️ Could not delete ${collectionName}:`, err.message);
+    }
+  })
+);
 
     // Clear local cache too
     sessionCollections.clear();
