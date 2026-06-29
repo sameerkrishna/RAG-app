@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getGlobalCollection, getSessionCollection, createSessionCollection, listDocuments } from './chromaService.js';
+import { getGlobalCollection, getSessionCollection, listDocuments } from './chromaService.js';
 
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const sessions = new Map();
