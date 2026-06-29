@@ -79,8 +79,10 @@ export function getMemoryStats(sessionId) {
   };
 }
 
-export function addTurnWithCitations(sessionId, role, content, citations = [], coverage = null) {
+// FIXED — answerId stored as turn.id, overriding the auto-generated one
+export function addTurnWithCitations(sessionId, role, content, citations = [], coverage = null, answerId = null) {
   return addTurn(sessionId, role, content, {
+    ...(answerId && { id: answerId }),  // override turn id so getSources can match it
     citations,
     coverage,
     hasCitations: citations.length > 0
