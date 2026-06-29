@@ -94,10 +94,8 @@ export async function* streamResponse(prompt) {
       });
 
       let firstToken = true;
-      let firstTokenTimeout = setTimeout(() => {
-        // If no first token in time, we'll retry
-        throw new Error('First token timeout');
-      }, FIRST_TOKEN_TIMEOUT);
+      const controller = new AbortController();
+const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
 
       for await (const chunk of result.stream) {
         const text = chunk.text();
