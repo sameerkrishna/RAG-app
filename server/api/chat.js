@@ -20,13 +20,9 @@ export async function handleChatStream(req, res) {
   const sessionId = providedSessionId || uuidv4();
   const answerId = uuidv4();
 
-  // Ensure session exists
   getOrCreateSession(sessionId);
-
-  // Store user question in memory
   const userTurn = addTurnWithCitations(sessionId, 'user', query.trim());
 
-  // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -39,28 +35,19 @@ export async function handleChatStream(req, res) {
   };
 
   try {
-    // Send initial status
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    // Retrieve relevant context
     const { results, coverage } = await retrieveForQuery(query, sessionId, { topK: 5 });
 
-    // Send retrieval results
     sendEvent('retrieval', {
       results: results.length,
       coverage: coverage.level,
       coverageScore: coverage.score
     });
 
-    // Check if we should refuse
     if (shouldShowRefusal(coverage)) {
-      sendEvent('status', { stage: 'refusal', message: getRefusalText() });
-
-      // Generate citations anyway for the refusal
       const citations = generateCitations(results);
-
       addTurnWithCitations(sessionId, 'assistant', getRefusalText(), citations, coverage);
-
       sendEvent('complete', {
         answerId,
         response: getRefusalText(),
@@ -68,37 +55,44 @@ export async function handleChatStream(req, res) {
         coverage,
         action: 'refusal'
       });
-
       res.end();
       return;
     }
 
-    // Build prompt with context
     sendEvent('status', { stage: 'generating', message: 'Generating response...' });
-
-    const contextText = results.map((r, i) =>
-      `[${i + 1}] ${r.metadata.filename || 'Source'}: ${r.text}`
-    ).join('\n\n');
 
     const memoryContext = getRecentTurns(sessionId, 5)
       .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
       .join('\n\n');
 
-    const prompt = `You are an AI Knowledge Assistant. Answer based ONLY on the provided context.
+    // ✅ FIX: Build prompt based on whether context exists
+    let prompt;
+
+    if (results.length > 0) {
+      const contextText = results.map((r, i) =>
+        `[${i + 1}] ${r.metadata.filename || 'Source'}: ${r.text}`
+      ).join('\n\n');
+
+      prompt = `You are a helpful AI Knowledge Assistant. Answer based on the provided context documents.
 
 CONTEXT:
 ${contextText}
 
-CONVERSATION HISTORY:
-${memoryContext}
+${memoryContext ? `CONVERSATION HISTORY:\n${memoryContext}\n\n` : ''}CURRENT QUESTION: ${query}
 
-CURRENT QUESTION: ${query}
+Answer concisely and cite sources using [1], [2] etc. referring to the context numbers above.`;
 
-Answer concisely with citations like [1], [2] referring to context numbers.`;
+    } else {
+      // ✅ FIX: No context — allow natural conversation instead of refusing
+      prompt = `You are a helpful AI Knowledge Assistant. You can answer general questions and have natural conversations. When users upload documents, you will be able to answer questions specifically about those documents.
+
+${memoryContext ? `CONVERSATION HISTORY:\n${memoryContext}\n\n` : ''}CURRENT QUESTION: ${query}
+
+Respond naturally and helpfully. If the question requires specific document knowledge, let the user know they can upload relevant documents.`;
+    }
 
     let fullResponse = '';
 
-    // Stream response
     for await (const chunk of streamResponse(prompt)) {
       if (chunk.type === 'token') {
         fullResponse += chunk.text;
@@ -110,13 +104,9 @@ Answer concisely with citations like [1], [2] referring to context numbers.`;
       }
     }
 
-    // Generate citations
     const citations = generateCitations(results);
-
-    // Store assistant response in memory
     addTurnWithCitations(sessionId, 'assistant', fullResponse, citations, coverage);
 
-    // Send completion
     sendEvent('complete', {
       answerId,
       response: fullResponse,
@@ -148,7 +138,6 @@ export async function getSources(req, res) {
   const { answerId } = req.params;
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
-  // Get from memory
   const recentTurns = getRecentTurns(sessionId, 10);
 
   for (const turn of recentTurns) {
