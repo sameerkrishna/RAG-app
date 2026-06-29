@@ -7,6 +7,12 @@ import { getOrCreateSession } from '../services/sessionService.js';
 
 const router = Router();
 
+// Fix 2: Short-circuit greetings — no retrieval, no citations
+const GREETING_PATTERN = /^(hi|hello|hey|thanks|thank you|bye|ok|okay|cool|great|sure|yes|no|got it|nice|awesome|perfect|sounds good|good|noted)[\s!?.]*$/i;
+
+// Fix 4: Detect when LLM says it can't answer from context
+const OUT_OF_SCOPE_PATTERN = /does not contain|no information|cannot find|not in the (provided )?context|outside.*knowledge base/i;
+
 export async function handleChatStream(req, res) {
   const { query, sessionId: providedSessionId } = req.body;
 
@@ -18,7 +24,6 @@ export async function handleChatStream(req, res) {
   const answerId = uuidv4();
 
   getOrCreateSession(sessionId);
-  addTurnWithCitations(sessionId, 'user', query.trim());
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -31,17 +36,36 @@ export async function handleChatStream(req, res) {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  // Fix 2: Greeting bypass — respond immediately, skip retrieval entirely
+  if (GREETING_PATTERN.test(query.trim())) {
+    const greetingResponse = 'Hello! How can I help you today?';
+    addTurnWithCitations(sessionId, 'user', query.trim());
+    addTurnWithCitations(sessionId, 'assistant', greetingResponse, [], { confidence: 0, topScore: 0 }, answerId);
+    sendEvent('complete', {
+      answerId,
+      response: greetingResponse,
+      citations: [],
+      coverage: { confidence: 0, topScore: 0 },
+      sources: [],
+    });
+    res.end();
+    return;
+  }
+
+  addTurnWithCitations(sessionId, 'user', query.trim());
+
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
     const { results, coverage } = await retrieveForQuery(query, sessionId, { topK: 5 });
 
-    // coverage is now { confidence: 47, topScore: 0.47 }
     sendEvent('retrieval', {
       results: results.length,
-      confidence: coverage.confidence   // e.g. 47  → display as "47% confidence"
+      confidence: coverage.confidence,
+      topScore: coverage.topScore
     });
 
+    // Pre-build sources + citations — used in both refusal and normal paths
     const citations = generateCitations(results);
     const sources = results.map(r => ({
       chunkId: r.id,
@@ -55,32 +79,29 @@ export async function handleChatStream(req, res) {
 
     if (shouldShowRefusal(coverage)) {
       const refusalText = getRefusalText();
-      addTurnWithCitations(sessionId, 'assistant', refusalText, citations, coverage, answerId);
-
+      addTurnWithCitations(sessionId, 'assistant', refusalText, [], coverage, answerId);
       sendEvent('complete', {
         answerId,
         response: refusalText,
-        citations,
+        citations: [],       // no citations on hard refusal
         coverage,
-        sources,
+        sources: [],
         action: 'refusal'
       });
-
       res.end();
       return;
     }
 
     sendEvent('status', { stage: 'generating', message: 'Generating response...' });
 
-    // Uses formatContextForPrompt — includes [Seed Document] labels + page numbers
     const contextText = formatContextForPrompt(results);
 
     const memoryContext = getRecentTurns(sessionId, 5)
       .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
       .join('\n\n');
 
-    const prompt = `You are an AI Knowledge Assistant. Answer based ONLY on the provided context. \
-If the context contains relevant information, use it to answer clearly and cite sources with [1], [2] etc.
+    const prompt = `You are an AI Knowledge Assistant. Answer ONLY using the numbered context below.
+If the answer is not in the context, respond with exactly: "The provided context does not contain information about this topic." Do NOT answer from general knowledge. Do NOT include citation numbers if you cannot find the answer in context.
 
 CONTEXT:
 ${contextText}
@@ -90,7 +111,10 @@ ${memoryContext}
 
 CURRENT QUESTION: ${query}
 
-Answer concisely with citations like [1], [2] referring to context numbers.`;
+Rules:
+- Cite sources inline as [1], [2] only for context chunks you actually used
+- Never invent citation numbers not present in the context above
+- If context is irrelevant, output the exact refusal message with no citations`;
 
     let fullResponse = '';
 
@@ -105,9 +129,31 @@ Answer concisely with citations like [1], [2] referring to context numbers.`;
       }
     }
 
-    addTurnWithCitations(sessionId, 'assistant', fullResponse, citations, coverage, answerId);
+    // Fix 3: Only keep citations whose index number appears in the response text
+    const citedIndices = [...fullResponse.matchAll(/\[(\d+)\]/g)]
+      .map(m => parseInt(m[1]))
+      .filter((v, i, a) => a.indexOf(v) === i); // dedupe
 
-    sendEvent('complete', { answerId, response: fullResponse, citations, coverage, sources });
+    // Fix 4: If LLM went off-context, strip all citations
+    const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
+
+    const finalCitations = (isOutOfScope || citedIndices.length === 0)
+      ? []
+      : citations.filter(c => citedIndices.includes(c.index));
+
+    const finalSources = (isOutOfScope || citedIndices.length === 0)
+      ? []
+      : sources.filter((_, i) => citedIndices.includes(i + 1));
+
+    addTurnWithCitations(sessionId, 'assistant', fullResponse, finalCitations, coverage, answerId);
+
+    sendEvent('complete', {
+      answerId,
+      response: fullResponse,
+      citations: finalCitations,
+      coverage,
+      sources: finalSources
+    });
 
     res.end();
 
