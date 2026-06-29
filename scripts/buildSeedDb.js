@@ -62,9 +62,8 @@ async function processSeedDocument(filePath) {
 async function buildSeedDatabase() {
   console.log('=== Building Seed Database ===\n');
   console.log(`Seed directory: ${SEED_DIR}`);
-  console.log(`Collection: ${process.env.CHROMA_GLOBAL_COLLECTION || 'global_knowledge'}`);
+  console.log(`Collection: ${process.env.CHROMA_GLOBAL_COLLECTION || 'dev'}`);
 
-  // Check if seed directory exists
   if (!fs.existsSync(SEED_DIR)) {
     console.log('\nSeed directory does not exist. Creating...');
     fs.mkdirSync(SEED_DIR, { recursive: true });
@@ -73,7 +72,6 @@ async function buildSeedDatabase() {
     return;
   }
 
-  // List PDF files
   const pdfFiles = fs.readdirSync(SEED_DIR)
     .filter(f => f.toLowerCase().endsWith('.pdf'))
     .map(f => path.join(SEED_DIR, f));
@@ -87,78 +85,59 @@ async function buildSeedDatabase() {
   console.log(`\nFound ${pdfFiles.length} PDF file(s) to process`);
 
   try {
-    // Get or create global collection
     const collection = await getGlobalCollection();
-    console.log('Connected to ChromaDB collection');
+    const beforeCount = await collection.count();
+    console.log(`\nConnected to ChromaDB — collection currently has ${beforeCount} vectors`);
 
-    const allEmbeddings = [];
-    let totalChunks = 0;
+    let totalChunksEmbedded = 0;
+    let totalDocsProcessed = 0;
 
     for (const pdfFile of pdfFiles) {
       const { documentId, filename, chunks, pageCount } = await processSeedDocument(pdfFile);
 
       console.log(`  - Generating embeddings for ${chunks.length} chunks...`);
 
-      // Process chunks with rate limiting
-      let processedCount = 0;
-      const batchSize = 4; // Parallel calls
+      // ✅ FIX: generateEmbeddings handles rate limiting internally — no manual wait needed
+      const embeddings = await generateEmbeddings(chunks);
 
-      for (let i = 0; i < chunks.length; i += batchSize) {
-        const batch = chunks.slice(i, i + batchSize);
-
-        const batchEmbeddings = [];
-        for (const chunk of batch) {
-          try {
-            const embeddings = await generateEmbeddings([chunk]);
-            if (embeddings && embeddings.length > 0) {
-              batchEmbeddings.push({
-                id: uuidv4(),
-                embedding: embeddings[0].embedding,
-                text: chunk.text,
-                metadata: {
-                  ...chunk.metadata,
-                  source_type: 'seed_document'
-                }
-              });
-            }
-          } catch (error) {
-            console.error(`    Error embedding chunk ${processedCount}:`, error.message);
-          }
-          processedCount++;
-        }
-
-        // Wait between batches
-        if (i + batchSize < chunks.length) {
-          console.log(`  - Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunks.length / batchSize)} complete, waiting...`);
-          await new Promise(resolve => setTimeout(resolve, 60000));
-        }
+      if (!embeddings || embeddings.length === 0) {
+        console.warn(`  - No embeddings generated for ${filename}, skipping.`);
+        continue;
       }
 
-      allEmbeddings.push({
-        documentId,
-        filename,
-        chunkCount: processedCount,
-        pageCount
-      });
+      console.log(`  - Embedded ${embeddings.length}/${chunks.length} chunks`);
 
-      totalChunks += processedCount;
-      console.log(`  - Complete: ${chunks.length} chunks processed`);
+      // ✅ FIX: Actually upload vectors to ChromaDB
+      const vectors = embeddings.map(e => ({
+        text: e.text,
+        metadata: {
+          ...e.metadata,
+          source_type: 'seed_document',
+          filename,
+          document_id: documentId,
+          page_count: pageCount,
+          upload_timestamp: new Date().toISOString()
+        }
+      }));
+
+      const embeddingValues = embeddings.map(e => e.embedding);
+      const ids = embeddings.map(e => e.id || uuidv4());
+
+      await addVectors(collection, vectors, embeddingValues, ids);
+
+      console.log(`  ✅ Uploaded ${embeddings.length} vectors for: ${filename}`);
+
+      totalChunksEmbedded += embeddings.length;
+      totalDocsProcessed++;
     }
 
-    // Add all vectors to collection
-    if (allEmbeddings.length > 0) {
-      console.log('\nUploading vectors to ChromaDB...');
+    const afterCount = await collection.count();
 
-      // Get collection count to verify
-      const beforeCount = await collection.count();
-
-      console.log(`Collection currently has ${beforeCount} vectors`);
-
-      console.log('\n=== Seed Database Build Complete ===');
-      console.log(`Documents processed: ${pdfFiles.length}`);
-      console.log(`Total chunks embedded: ${totalChunks}`);
-      console.log(`Collection: ${process.env.CHROMA_GLOBAL_COLLECTION || 'global_knowledge'}`);
-    }
+    console.log('\n=== Seed Database Build Complete ===');
+    console.log(`Documents processed: ${totalDocsProcessed}/${pdfFiles.length}`);
+    console.log(`Total chunks uploaded: ${totalChunksEmbedded}`);
+    console.log(`Collection vectors before: ${beforeCount} → after: ${afterCount}`);
+    console.log(`Collection: ${process.env.CHROMA_GLOBAL_COLLECTION || 'dev'}`);
 
   } catch (error) {
     console.error('\nError building seed database:', error);
@@ -166,7 +145,6 @@ async function buildSeedDatabase() {
   }
 }
 
-// Run the build
 buildSeedDatabase()
   .then(() => {
     console.log('\nBuild completed successfully.');
