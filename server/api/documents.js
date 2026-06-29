@@ -264,7 +264,8 @@ export async function deleteDocument(req, res) {
 
 export async function getDocumentFile(req, res) {
   const { documentId } = req.params;
-
+ console.log('PDF requested for documentId:', documentId);
+  console.log('PDFs in root:', fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf')));
   try {
     // Step 1: session upload — /tmp/uploads/<uuid>.pdf
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
