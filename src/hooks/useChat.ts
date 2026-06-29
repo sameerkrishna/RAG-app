@@ -84,11 +84,16 @@ export function useChat(sessionId: string) {
 
               // ✅ FIX: Use currentEventName (from "event:" line) to branch
               if (currentEventName === 'token' && payload.text) {
-                accumulatedText += payload.text;
-                setMessages(prev => prev.map(m =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: accumulatedText }
-                    : m
+               // Drip each character with a small delay for natural typewriter feel
+                const chars = payload.text.split('');
+                for (const char of chars) {
+                  accumulatedText += char;
+                  setMessages(prev => prev.map(m =>
+                    m.id === assistantMessageId
+                      ? { ...m, content: accumulatedText }
+                      : m
+                  ));
+                  await new Promise(resolve => setTimeout(resolve, 30));
                 ));
 
               } else if (currentEventName === 'complete') {
