@@ -84,6 +84,9 @@ export async function* streamResponse(prompt) {
 
   while (retries < maxRetries) {
     try {
+      // ✅ FIX: Create AbortController per attempt for timeout signalling
+      const controller = new AbortController();
+
       const result = await model.generateContentStream({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
@@ -94,21 +97,32 @@ export async function* streamResponse(prompt) {
       });
 
       let firstToken = true;
-      const controller = new AbortController();
-const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
+
+      // ✅ FIX: Use controller.abort() instead of throw inside setTimeout
+      // (throw inside setTimeout is uncaught and silently kills the stream)
+      const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
 
       for await (const chunk of result.stream) {
+        // ✅ FIX: Check abort signal on each iteration
+        if (controller.signal.aborted) {
+          clearTimeout(firstTokenTimeout);
+          throw new Error('First token timeout — no response from model');
+        }
+
         const text = chunk.text();
         if (text) {
           if (firstToken) {
             firstToken = false;
-            clearTimeout(firstTokenTimeout);
+            clearTimeout(firstTokenTimeout); // got first token, cancel timeout
           }
           yield { type: 'token', text };
         }
       }
 
+      // Stream completed naturally — clean up timeout
+      clearTimeout(firstTokenTimeout);
       return { success: true };
+
     } catch (error) {
       retries++;
       console.error(`Model attempt ${retries} failed:`, error.message);
@@ -118,14 +132,13 @@ const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEO
         throw new LLMUnavailableError();
       }
 
-      // Switch to fallback model
+      // Switch to fallback model on retry
       model = getFallbackModel();
     }
   }
 }
 
 export async function* streamChatResponse(query, retrievedResults, sessionId, memoryService) {
-  // Build the prompt
   const memoryContext = memoryService ? memoryService.formatMemoryForPrompt(sessionId) : '';
   const contextList = retrievedResults || [];
   const contextText = contextList.map((r, i) =>
@@ -139,7 +152,6 @@ export async function* streamChatResponse(query, retrievedResults, sessionId, me
     coverage: { level: 'high' }
   });
 
-  // Stream the response
   let fullResponse = '';
 
   try {
