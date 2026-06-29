@@ -10,14 +10,18 @@ function expressPlugin() {
   return {
     name: 'express-plugin',
     async configureServer(server) {
+      // ✅ Load .env FIRST before any server module is imported
+      // This ensures process.env is populated before chromaService, geminiService etc. initialize
+      const dotenv = await import('dotenv');
+      dotenv.config();
+
       const { default: expressApp } = await import('./server/app.js');
       app = expressApp;
 
       server.middlewares.use('/api', (req, res, next) => {
-        // ✅ Disable Vite's response buffering for SSE chat endpoint
+        // ✅ Patch SSE routes to flush immediately — prevents Vite buffering tokens
         if (req.url?.startsWith('/chat')) {
           res.setHeader('X-Accel-Buffering', 'no');
-          // ✅ Patch res.write to flush immediately after every write
           const originalWrite = res.write.bind(res);
           res.write = (chunk) => {
             const result = originalWrite(chunk);
