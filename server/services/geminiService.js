@@ -24,14 +24,14 @@ let fallbackModel = null;
 
 function getPrimaryModel() {
   if (!primaryModel) {
-    primaryModel = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
+    primaryModel = getGenAI().getGenerativeModel({ model: PRIMARY_MODEL });
   }
   return primaryModel;
 }
 
 function getFallbackModel() {
   if (!fallbackModel) {
-    fallbackModel = genAI.getGenerativeModel({ model: FALLBACK_MODEL });
+    fallbackModel = getGenAI().getGenerativeModel({ model: FALLBACK_MODEL });
   }
   return fallbackModel;
 }
