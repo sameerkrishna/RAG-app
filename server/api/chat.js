@@ -131,9 +131,9 @@ Rules:
     }
 
     // Fix 3: Only keep citations whose index number appears in the response text
-    const citedIndices = [...fullResponse.matchAll(/\[(\d+)\]/g)]
-      .map(m => parseInt(m[1]))
-      .filter((v, i, a) => a.indexOf(v) === i); // dedupe
+    const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
+  .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
+  .filter((v, i, a) => a.indexOf(v) === i);
 
     // Fix 4: If LLM went off-context, strip all citations
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
