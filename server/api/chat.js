@@ -125,7 +125,7 @@ Rules:
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
          // Add delay between tokens for natural feel
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 90));
       } else if (chunk.type === 'error') {
         sendEvent('error', { message: chunk.error, code: 'LLM_ERROR' });
       } else if (chunk.type === 'complete') {
