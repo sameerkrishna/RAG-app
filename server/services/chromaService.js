@@ -233,7 +233,8 @@ export async function cleanupSessionCollections() {
     
     // List all collections in Chroma Cloud
     const collections = await client.listCollections();
-    
+    console.log('RAW collections:', JSON.stringify(collections));
+
     const sessionCollectionNames = collections.filter(c => 
   c.startsWith('session_')
 );
