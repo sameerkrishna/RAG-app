@@ -61,23 +61,7 @@ export async function handleChatStream(req, res) {
     res.write(`event: ${event}\n`);
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
-
-  // Fix 2: Greeting bypass — respond immediately, skip retrieval entirely
-  if (GREETING_PATTERN.test(query.trim())) {
-    const greetingResponse = 'Hello! How can I help you today?';
-    addTurnWithCitations(sessionId, 'user', query.trim());
-    addTurnWithCitations(sessionId, 'assistant', greetingResponse, [], { confidence: 0, topScore: 0 }, answerId);
-    sendEvent('complete', {
-      answerId,
-      response: greetingResponse,
-      citations: [],
-      coverage: { confidence: 0, topScore: 0 },
-      sources: [],
-    });
-    res.end();
-    return;
-  }
-
+  
   addTurnWithCitations(sessionId, 'user', query.trim());
 
   try {
