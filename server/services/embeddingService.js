@@ -19,7 +19,7 @@ function estimateTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
-// ✅ FIX 3: Accept tokens param so callers can track usage accurately
+// ✅ FIX 3: Accept tokens param so callers can accurately track usage
 async function waitForRateLimit(tokens = 0) {
   const now = Date.now();
   const windowElapsed = now - rateLimitState.windowStart;
@@ -44,6 +44,8 @@ async function waitForRateLimit(tokens = 0) {
 
 async function embedWithRetry(text, attempt = 1, maxAttempts = 5) {
   const baseRetryDelay = 60000;
+  // ✅ FIX 4: Short delay for transient spurious API_KEY_INVALID 400s
+  const invalidKeyRetryDelay = 2000;
 
   try {
     const result = await embeddingModel.embedContent(text);
@@ -54,6 +56,21 @@ async function embedWithRetry(text, attempt = 1, maxAttempts = 5) {
 
     throw new EmbeddingError('No embedding returned from API');
   } catch (error) {
+    // ✅ FIX 4: Retry on intermittent spurious API_KEY_INVALID — valid keys
+    // occasionally get a 400 from Google's gateway on cold/first requests
+    const isSpuriousInvalidKey =
+      error?.status === 400 &&
+      error?.message?.includes('API_KEY_INVALID');
+
+    if (isSpuriousInvalidKey) {
+      if (attempt >= maxAttempts) {
+        throw new EmbeddingError('API key validation failed after retries — check GEMINI_API_KEY');
+      }
+      console.warn(`Spurious API_KEY_INVALID (attempt ${attempt}/${maxAttempts}), retrying in ${invalidKeyRetryDelay / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, invalidKeyRetryDelay));
+      return embedWithRetry(text, attempt + 1, maxAttempts);
+    }
+
     if (is429Error(error) || error?.status === 429 || error?.message?.includes('RESOURCE_EXHAUSTED')) {
       if (attempt >= maxAttempts) {
         throw new EmbeddingError('Max retry attempts reached for rate limiting');
@@ -92,8 +109,8 @@ export async function generateEmbeddings(chunks) {
       await new Promise(resolve => setTimeout(resolve, 60000));
     }
 
-    // ✅ FIX 2: Removed embedBatch() — it was called and discarded, then
-    // every chunk was re-embedded individually anyway. Now embed directly.
+    // ✅ FIX 2: Removed embedBatch() — it was called and its result discarded,
+    // then every chunk was re-embedded individually anyway. Embed directly.
     const batchPromises = batch.flatMap(group =>
       group.map(async (chunk) => {
         const tokens = estimateTokens(chunk.text);
