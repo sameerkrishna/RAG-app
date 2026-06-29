@@ -82,13 +82,12 @@ export function getMemoryStats(sessionId) {
 // FIXED — answerId stored as turn.id, overriding the auto-generated one
 export function addTurnWithCitations(sessionId, role, content, citations = [], coverage = null, answerId = null) {
   return addTurn(sessionId, role, content, {
-    ...(answerId && { id: answerId }),  // override turn id so getSources can match it
+    ...(answerId && { id: answerId }),  // ← this is the only new line
     citations,
     coverage,
     hasCitations: citations.length > 0
   });
 }
-
 export function getLastUserMessage(sessionId) {
   const memory = getMemory(sessionId);
   for (let i = memory.turns.length - 1; i >= 0; i--) {
