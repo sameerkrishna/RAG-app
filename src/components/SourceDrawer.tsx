@@ -47,6 +47,9 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
           ) : (
             sources.map((source, index) => {
               const citationNum = citationIndexMap.get(source.chunkId);
+              // Build PDF URL — append #page=N so browser opens at the exact page
+              const pageFragment = source.pageNumber ? `#page=${source.pageNumber}` : '';
+              const pdfUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}${pageFragment}`;
               return (
                 <div
                   key={source.chunkId || index}
@@ -93,7 +96,7 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => window.open(`/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`, '_blank')}
+                      onClick={() => window.open(pdfUrl, '_blank')}
                     >
                       <ExternalLink className="w-3 h-3 mr-1" />
                       View PDF
