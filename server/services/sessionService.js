@@ -62,6 +62,7 @@ export function deleteSession(sessionId) {
  * - getSessionCollection() handles getCollection vs createCollection:
  *     new UUID  → collection not found on Chroma → createCollection → needs seeding
  *     server restart, same tab → collection found → reuse → skip seeding (count check)
+ * - Both get and add are batched at 300 to respect Chroma Cloud free tier quotas.
  */
 export async function initSessionWithGlobalDocs(sessionId) {
   console.log("In the init sessionwith gobaldocs function");
@@ -73,7 +74,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
     const globalCollection = await getGlobalCollection();
     const sessionCollection = await getSessionCollection(sessionId);
 
-    // Paginate global collection — Chroma Cloud hard cap is 300/call
+    // Paginate global fetch — Chroma Cloud hard cap is 300/call
     const BATCH_SIZE = 300;
     let offset = 0;
     const allIds = [], allEmbeddings = [], allDocuments = [], allMetadatas = [];
@@ -99,7 +100,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
       return;
     }
 
-    // Skip if session collection already has all vectors (server restart, same tab)
+    // Skip if session collection already fully seeded (server restart, same tab)
     const existingCount = await sessionCollection.count();
     if (existingCount >= allIds.length) {
       console.log(`✅ Session ${sessionId} already fully seeded (${existingCount} vectors). Skipping.`);
@@ -107,13 +108,16 @@ export async function initSessionWithGlobalDocs(sessionId) {
       return;
     }
 
-    // Fresh collection — add all global vectors
-    await sessionCollection.add({
-      ids: allIds,
-      embeddings: allEmbeddings,
-      documents: allDocuments,
-      metadatas: allMetadatas.map(m => ({ ...m, source_type: 'global' }))
-    });
+    // Add in batches of 300 — Chroma Cloud also caps add() at 300 records/call
+    for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
+      await sessionCollection.add({
+        ids: allIds.slice(i, i + BATCH_SIZE),
+        embeddings: allEmbeddings.slice(i, i + BATCH_SIZE),
+        documents: allDocuments.slice(i, i + BATCH_SIZE),
+        metadatas: allMetadatas.slice(i, i + BATCH_SIZE).map(m => ({ ...m, source_type: 'global' }))
+      });
+      console.log(`  📦 Added batch ${Math.floor(i / BATCH_SIZE) + 1}: records ${i + 1}–${Math.min(i + BATCH_SIZE, allIds.length)}`);
+    }
 
     console.log(`✅ Seeded ${allIds.length} vectors into session ${sessionId}`);
     seededSessions.add(sessionId);
