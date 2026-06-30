@@ -4,7 +4,7 @@ import { useChat } from '../hooks/useChat';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
 import { Send, BookOpen, X, Bot, MessageSquarePlus } from 'lucide-react';
-import type { SearchResult } from '../types';
+import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
 
 interface AssistantProps {
@@ -16,6 +16,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
+  const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -30,8 +31,9 @@ export default function Assistant({ sessionId }: AssistantProps) {
     setInput('');
   };
 
-  const handleShowSources = (sources: SearchResult[]) => {
+  const handleShowSources = (sources: SearchResult[], citations: Citation[]) => {
     setSelectedSources(sources);
+    setSelectedCitations(citations);
     setSourceDrawerOpen(true);
   };
 
@@ -137,7 +139,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
               <ChatMessage
                 key={msg.id}
                 message={msg}
-                onShowSources={() => msg.sources && handleShowSources(msg.sources)}
+                onShowSources={() => msg.sources && handleShowSources(msg.sources, msg.citations || [])}
                 onWebSearch={() => handleWebSearch(getLastUserQuery())}
                 onRetry={() => getLastUserQuery() && sendMessage(getLastUserQuery())}
               />
@@ -208,6 +210,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
         isOpen={sourceDrawerOpen}
         onClose={() => setSourceDrawerOpen(false)}
         sources={selectedSources}
+        citations={selectedCitations}
       />
     </div>
   );
