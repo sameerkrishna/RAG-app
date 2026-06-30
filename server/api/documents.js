@@ -286,7 +286,9 @@ console.log('Seed dir:', seedDir);
 console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
     
     if (fs.existsSync(uploadPath)) {
+      const stat = fs.statSync(seedPath);
       res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', stat.size);
       res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
       return fs.createReadStream(uploadPath).pipe(res);
     }
@@ -295,10 +297,6 @@ console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
          const stat = fs.statSync(seedPath);
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Length', stat.size);
-  res.setHeader('Content-Disposition', contentDisposition(filename));
-  return fs.createReadStream(seedPath).pipe(res);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', contentDisposition(filename));
         return fs.createReadStream(seedPath).pipe(res);
