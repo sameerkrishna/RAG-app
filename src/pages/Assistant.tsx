@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useChat } from '../hooks/useChat';
+import { useChat, getAllConversations, deleteConversation } from '../hooks/useChat';
+import type { StoredConversation } from '../hooks/useChat';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
-import { Send, BookOpen, X, Bot, MessageSquarePlus, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
+import { Send, BookOpen, X, Bot, MessageSquarePlus, ChevronLeft, ChevronRight, Settings, Trash2 } from 'lucide-react';
 import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
@@ -20,18 +21,24 @@ function getGreeting(): string {
 }
 
 export default function Assistant({ sessionId }: AssistantProps) {
-  const { messages, isLoading, sendMessage, cancel, clearMessages } = useChat(sessionId);
+  const { messages, isLoading, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
   const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [conversations, setConversations] = useState<StoredConversation[]>(() => getAllConversations());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
+
+  // Refresh sidebar list whenever activeConvId or message count changes
+  useEffect(() => {
+    setConversations(getAllConversations());
+  }, [activeConvId, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -50,7 +57,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Block submit if loading or empty — but input itself stays enabled for typing
     if (!input.trim() || isLoading) return;
     sendMessage(input.trim(), sessionInitRef.current ?? undefined);
     setInput('');
@@ -60,6 +66,19 @@ export default function Assistant({ sessionId }: AssistantProps) {
     clearMessages();
     setSourceDrawerOpen(false);
     setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleLoadConversation = (conv: StoredConversation) => {
+    loadConversation(conv);
+    setSourceDrawerOpen(false);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+  };
+
+  const handleDeleteConversation = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    deleteConversation(id);
+    setConversations(getAllConversations());
+    if (activeConvId === id) handleNewConversation();
   };
 
   const handleShowSources = (sources: SearchResult[], citations: Citation[]) => {
@@ -131,7 +150,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-2">
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
           <button
             onClick={handleNewConversation}
             className={cn(
@@ -155,6 +174,35 @@ export default function Assistant({ sessionId }: AssistantProps) {
             <BookOpen className="h-4 w-4 flex-shrink-0" />
             {!sidebarCollapsed && <span>Knowledge Base</span>}
           </Link>
+
+          {/* Recents — only when expanded */}
+          {!sidebarCollapsed && conversations.length > 0 && (
+            <div className="pt-3">
+              <p className="px-2 pb-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Recents</p>
+              {conversations.map(conv => (
+                <button
+                  key={conv.id}
+                  onClick={() => handleLoadConversation(conv)}
+                  className={cn(
+                    'group flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm transition-colors hover:bg-accent',
+                    activeConvId === conv.id
+                      ? 'bg-accent text-accent-foreground font-medium'
+                      : 'text-muted-foreground'
+                  )}
+                >
+                  <span className="truncate text-left flex-1">{conv.title}</span>
+                  <span
+                    role="button"
+                    onClick={(e) => handleDeleteConversation(e, conv.id)}
+                    className="ml-1 flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded hover:text-destructive transition-opacity"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </nav>
 
         {/* User profile strip */}
@@ -176,9 +224,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
         </div>
       </aside>
 
-      {/* Main + Sources side-by-side */}
+      {/* Main + Sources */}
       <div className="flex flex-1 min-w-0 overflow-hidden">
-
         <main className="flex flex-1 flex-col min-w-0">
 
           {isFirstMessage ? (
@@ -197,12 +244,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
                     className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                     autoFocus
                   />
-                  <Button
-                    type="submit"
-                    disabled={!input.trim() || isLoading}
-                    size="icon"
-                    className="h-8 w-8 rounded-xl flex-shrink-0"
-                  >
+                  <Button type="submit" disabled={!input.trim() || isLoading} size="icon" className="h-8 w-8 rounded-xl flex-shrink-0">
                     <Send className="h-4 w-4" />
                   </Button>
                 </div>
@@ -213,10 +255,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
             </div>
           ) : (
             <>
-              <div
-                ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto px-6 pb-28 pt-6"
-              >
+              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-6 pb-28 pt-6">
                 <div className="mx-auto max-w-3xl space-y-6">
                   {messages.map(msg => (
                     <ChatMessage
@@ -238,17 +277,12 @@ export default function Assistant({ sessionId }: AssistantProps) {
                       <span>Thinking...</span>
                     </div>
                   )}
-
                   <div ref={messagesEndRef} />
                 </div>
               </div>
 
-              {/* Sticky input — input always enabled, only submit gated on isLoading */}
               <div className="flex flex-shrink-0 flex-col border-t bg-background">
-                <form
-                  onSubmit={handleSubmit}
-                  className="mx-auto flex w-full max-w-3xl items-end gap-2 px-6 py-4"
-                >
+                <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-3xl items-end gap-2 px-6 py-4">
                   <div className="relative flex-1">
                     <input
                       ref={inputRef}
@@ -257,11 +291,9 @@ export default function Assistant({ sessionId }: AssistantProps) {
                       onChange={e => setInput(e.target.value)}
                       placeholder="Ask a question..."
                       className="w-full rounded-xl border bg-background px-4 py-3 pr-12 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                      // NOT disabled — user can type ahead while response streams
                     />
                   </div>
                   {isLoading ? (
-                    // Show cancel button while loading
                     <Button type="button" variant="outline" size="icon" onClick={cancel} className="h-11 w-11 flex-shrink-0 rounded-xl">
                       <X className="h-4 w-4" />
                     </Button>
@@ -281,7 +313,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
           )}
         </main>
 
-        {/* Inline Sources Panel */}
         {sourceDrawerOpen && (
           <SourceDrawer
             isOpen={sourceDrawerOpen}
