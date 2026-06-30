@@ -11,6 +11,7 @@ import chatRouter from './api/chat.js';
 import feedbackRouter from './api/feedback.js';
 import searchRouter from './api/search.js';
 import { getOrCreateSession, initSessionWithGlobalDocs } from './services/sessionService.js';
+import { addTurnWithCitations } from './services/memoryService.js';
 
 const app = express();
 
@@ -49,10 +50,6 @@ app.get('/ping', (req, res) => {
 
 // ===============================
 // SESSION INIT ROUTE
-// Vite plugin strips /api prefix before passing to Express
-// so browser calls /api/session/init → Express receives /session/init
-// Called by frontend on chat screen mount — seeds global docs into session
-// before the user sends their first message, eliminating first-message latency
 // ===============================
 app.post('/session/init', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
@@ -67,9 +64,32 @@ app.post('/session/init', async (req, res) => {
     await initSessionWithGlobalDocs(sessionId);
     res.json({ ready: true, sessionId });
   } catch (err) {
-    // Non-fatal — chat still works, seeding will retry on first message
     console.warn('Session init warning:', err.message);
     res.json({ ready: false, sessionId, warning: err.message });
+  }
+});
+
+// ===============================
+// SESSION RESTORE MEMORY ROUTE
+// Issue 3 fix: replay stored messages into server-side memoryMap when loading old conversation
+// ===============================
+app.post('/session/restore-memory', (req, res) => {
+  const { convId, messages } = req.body;
+
+  if (!convId || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'convId and messages are required', code: 'BAD_REQUEST' });
+  }
+
+  try {
+    for (const msg of messages) {
+      if ((msg.role === 'user' || msg.role === 'assistant') && typeof msg.content === 'string') {
+        addTurnWithCitations(convId, msg.role, msg.content);
+      }
+    }
+    res.json({ ok: true, convId, restored: messages.length });
+  } catch (err) {
+    console.warn('Memory restore warning:', err.message);
+    res.json({ ok: false, convId, warning: err.message });
   }
 });
 

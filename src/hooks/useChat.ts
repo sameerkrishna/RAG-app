@@ -37,21 +37,12 @@ export function deleteConversation(id: string) {
 
 // ── hook ──────────────────────────────────────────────────────────────────
 export function useChat(sessionId: string) {
-  // Issue 2 fix: restore last conversation on mount so KB nav doesn't lose state
-  const recentConv = getAllConversations()[0] ?? null;
-
-  const [messages, setMessages] = useState<ChatMessage[]>(
-    recentConv ? recentConv.messages : []
-  );
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeConvId, setActiveConvId] = useState<string | null>(
-    recentConv ? recentConv.id : null
-  );
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
-  // Issue 1 fix: ref for synchronous convId access — avoids stale closure on first message
-  const activeConvIdRef = useRef<string | null>(recentConv ? recentConv.id : null);
-
+  const activeConvIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const persist = useCallback((msgs: ChatMessage[], convId: string) => {
@@ -76,17 +67,24 @@ export function useChat(sessionId: string) {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
-    // Issue 1 fix: read ref synchronously so first message gets correct convId immediately
+    // Use existing convId from ref, or generate a new one
     const convId = activeConvIdRef.current ?? crypto.randomUUID();
     activeConvIdRef.current = convId;
-    if (!activeConvId) setActiveConvId(convId);
 
-    setMessages(prev => [...prev, {
+    const userMessage: ChatMessage = {
       id: userMessageId,
       role: 'user',
       content: query,
       timestamp: new Date()
-    }]);
+    };
+
+    // Issue 1 fix: persist user message immediately so sidebar title appears at once
+    setMessages(prev => {
+      const next = [...prev, userMessage];
+      persist(next, convId);
+      return next;
+    });
+    setActiveConvId(convId);
 
     setMessages(prev => [...prev, {
       id: assistantMessageId,
@@ -110,7 +108,6 @@ export function useChat(sessionId: string) {
           'Content-Type': 'application/json',
           'x-session-id': sessionId
         },
-        // Issue 5 fix: send convId so server uses it as isolated memory key
         body: JSON.stringify({ query, sessionId, convId }),
         signal: abortControllerRef.current.signal
       });
@@ -220,7 +217,7 @@ export function useChat(sessionId: string) {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [sessionId, activeConvId, persist]);
+  }, [sessionId, persist]);
 
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -228,20 +225,34 @@ export function useChat(sessionId: string) {
   }, []);
 
   const clearMessages = useCallback(() => {
-    // Issue 5 fix: reset ref to null so next sendMessage generates a fresh convId
     activeConvIdRef.current = null;
     setMessages([]);
     setError(null);
     setActiveConvId(null);
   }, []);
 
-  const loadConversation = useCallback((conv: StoredConversation) => {
-    // Issue 5 fix: sync ref so next message uses the loaded conversation's convId
+  const loadConversation = useCallback(async (conv: StoredConversation) => {
     activeConvIdRef.current = conv.id;
     setMessages(conv.messages);
     setActiveConvId(conv.id);
     setError(null);
-  }, []);
+
+    // Issue 3 fix: replay conversation turns to server memory so follow-up questions work
+    try {
+      await fetch('/api/session/restore-memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId },
+        body: JSON.stringify({
+          convId: conv.id,
+          messages: conv.messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .map(m => ({ role: m.role, content: m.content }))
+        })
+      });
+    } catch (err) {
+      console.warn('Memory restore failed (non-fatal):', err);
+    }
+  }, [sessionId]);
 
   return { messages, isLoading, error, activeConvId, sendMessage, cancel, clearMessages, loadConversation };
 }
