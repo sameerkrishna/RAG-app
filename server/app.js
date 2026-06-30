@@ -55,7 +55,7 @@ app.get('/ping', (req, res) => {
 app.post('/api/session/init', async (req, res) => {
   console.log('A')
   const sessionId = req.headers['x-session-id'];
-console.log('session id ': sessionId)
+console.log('session id: '+ sessionId)
   if (!sessionId) {
     console.log('returning')
     return res.status(400).json({ error: 'Missing x-session-id header', code: 'MISSING_SESSION' });
