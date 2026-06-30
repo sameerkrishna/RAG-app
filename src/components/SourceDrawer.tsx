@@ -20,12 +20,24 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleViewPdf = async (source: SearchResult) => {
+    const baseUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
+    try {
+      const res = await fetch(baseUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const pageUrl = source.pageNumber ? `${objectUrl}#page=${source.pageNumber}` : objectUrl;
+      window.open(pageUrl, '_blank');
+    } catch {
+      window.open(baseUrl, '_blank');
+    }
+  };
+
   const citationIndexMap = new Map<string, number>();
   citations.forEach(c => {
     if (c.chunkId) citationIndexMap.set(c.chunkId, c.index);
   });
 
-  // Inline panel — no overlay, parent controls mounting via conditional render
   return (
     <div className="flex flex-col w-[320px] flex-shrink-0 border-l bg-background overflow-hidden">
       <div className="p-4 border-b flex items-center justify-between">
@@ -43,8 +55,6 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
         ) : (
           sources.map((source, index) => {
             const citationNum = citationIndexMap.get(source.chunkId);
-            const pageFragment = source.pageNumber ? `#page=${source.pageNumber}` : '';
-            const pdfUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}${pageFragment}`;
             return (
               <div
                 key={source.chunkId || index}
@@ -81,7 +91,7 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
                     <Copy className="w-3 h-3 mr-1" />
                     {copiedId === source.chunkId ? 'Copied!' : 'Copy'}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => window.open(pdfUrl, '_blank')}>
+                  <Button variant="ghost" size="sm" onClick={() => handleViewPdf(source)}>
                     <ExternalLink className="w-3 h-3 mr-1" />
                     View PDF
                   </Button>
