@@ -49,24 +49,21 @@ app.get('/ping', (req, res) => {
 
 // ===============================
 // SESSION INIT ROUTE
+// Vite plugin strips /api prefix before passing to Express
+// so browser calls /api/session/init → Express receives /session/init
 // Called by frontend on chat screen mount — seeds global docs into session
 // before the user sends their first message, eliminating first-message latency
 // ===============================
 app.post('/session/init', async (req, res) => {
-  console.log('A')
   const sessionId = req.headers['x-session-id'];
-console.log('session id: '+ sessionId)
+
   if (!sessionId) {
-    console.log('returning')
     return res.status(400).json({ error: 'Missing x-session-id header', code: 'MISSING_SESSION' });
   }
 
   getOrCreateSession(sessionId);
 
-  // Fire and don't block — client doesn't need to wait for full seeding
-  // But we do await so the client knows when it's ready
   try {
-    console.log('calling initsession now')
     await initSessionWithGlobalDocs(sessionId);
     res.json({ ready: true, sessionId });
   } catch (err) {
