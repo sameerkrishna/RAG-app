@@ -13,16 +13,16 @@ const MAX_UPLOAD_SIZE_MB = parseInt(process.env.MAX_UPLOAD_SIZE_MB) || 5;
 
 const seededSessions = new Set();
 
-export function createSession() {
-  const sessionId = uuidv4();
+export function createSession(sessionId) {
+  const id = sessionId || uuidv4();
   const session = {
-    id: sessionId,
+    id,
     createdAt: new Date(),
     lastAccessed: new Date(),
     documents: [],
     timeoutMinutes: DEFAULT_TIMEOUT_MINUTES
   };
-  sessions.set(sessionId, session);
+  sessions.set(id, session);
   return session;
 }
 
@@ -41,6 +41,7 @@ export function getOrCreateSession(sessionId) {
   if (sessionId) {
     const existing = getSession(sessionId);
     if (existing) return existing;
+    return createSession(sessionId);
   }
   return createSession();
 }
@@ -233,12 +234,6 @@ export function getSessionDocuments(sessionId) {
   return session.documents;
 }
 
-/**
- * getAllDocuments: reads directly from in-memory session.documents.
- * No Chroma Cloud call — session.documents is populated once on init
- * and kept in sync on upload/delete.
- * source_type 'global' is remapped to 'seed' for the frontend Document type.
- */
 export function getAllDocuments(sessionId) {
   const session = getSession(sessionId);
   if (!session) return { sessionDocuments: [], globalDocuments: [] };
