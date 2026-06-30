@@ -5,7 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 const TOP_K = parseInt(process.env.TOP_K) || 5;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
 
-// Cache resolved collection objects
 const cachedSessionCollections = new Map();
 
 async function getOrCacheSessionCollection(sessionId) {
@@ -13,7 +12,7 @@ async function getOrCacheSessionCollection(sessionId) {
     return cachedSessionCollections.get(sessionId);
   }
   try {
-    const collection = await getSessionCollection(sessionId);
+    const { collection } = await getSessionCollection(sessionId); // destructure
     if (collection) cachedSessionCollections.set(sessionId, collection);
     return collection;
   } catch {
@@ -45,11 +44,9 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
       return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding };
     }
 
-    // Single query — session collection has global vectors already copied in
     const rawResults = await queryCollection(sessionCollection, queryEmbedding, topK)
       .catch(() => []);
 
-    // Preserve source_type from metadata so UI badge (Seed/Session) still works
     const results = rawResults.map(r => ({
       ...r,
       source_type: r.metadata?.source_type || 'session'

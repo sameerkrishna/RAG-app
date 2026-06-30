@@ -31,13 +31,11 @@ const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// All uploaded PDFs go to /tmp — never to seed_documents
 const uploadDir = '/tmp/uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Seed PDFs live here — only used for serving the file (View PDF), never written to
 const seedDir = path.resolve(__dirname, '../../seed_documents');
 
 const storage = multer.diskStorage({
@@ -57,7 +55,6 @@ const upload = multer({
   }
 });
 
-// RFC 5987 — safe Content-Disposition for filenames with special chars, unicode, etc.
 function contentDisposition(displayName) {
   const encoded = encodeURIComponent(displayName)
     .replace(/'/g, '%27')
@@ -121,7 +118,6 @@ export async function handleUpload(req, res) {
     const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
     const cleanFilename = sanitizeFilename(file.originalname);
 
-    // Count only user-uploaded docs (not global seeds) toward the limit
     const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
     if (uploadedCount >= maxPDFs) {
       fs.unlinkSync(file.path);
@@ -165,7 +161,7 @@ export async function handleUpload(req, res) {
         total_chunks: rawChunks.length,
         page_number: getPageNumber(chunk.charStart, pageMap),
         total_pages: totalPages,
-        source_type: 'session_upload',  // always session_upload for user uploads
+        source_type: 'session_upload',
         upload_timestamp: new Date().toISOString(),
         char_start: chunk.charStart,
         char_end: chunk.charEnd,
@@ -173,8 +169,8 @@ export async function handleUpload(req, res) {
       }
     }));
 
-    // Upload always targets session collection — never global
-    const collection = await getSessionCollection(sessionId);
+    // Destructure collection from getSessionCollection
+    const { collection } = await getSessionCollection(sessionId);
 
     const embeddings = await generateEmbeddings(
       chunks,
@@ -203,7 +199,6 @@ export async function handleUpload(req, res) {
       embeddings.map(e => e.id)
     );
 
-    // Invalidate retrieval cache so next query picks up new vectors
     invalidateSessionCollectionCache(sessionId);
 
     addDocumentToSession(sessionId, {
@@ -214,7 +209,6 @@ export async function handleUpload(req, res) {
       chunkCount: embeddings.length
     });
 
-    // File stays in /tmp — not deleted after upload
     res.status(201).json({
       success: true,
       document: {
@@ -256,9 +250,8 @@ export async function deleteDocument(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
   try {
-    // Only delete from session collection — never touches global collection
     if (sessionId) {
-      const collection = await getSessionCollection(sessionId);
+      const { collection } = await getSessionCollection(sessionId); // destructure
       if (collection) {
         const count = await deleteDocumentVectors(collection, documentId);
         if (count > 0) {
@@ -268,7 +261,6 @@ export async function deleteDocument(req, res) {
       }
     }
 
-    // Delete the uploaded file from /tmp only (never from seed_documents)
     const tmpPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(tmpPath)) {
       fs.unlinkSync(tmpPath);
@@ -287,7 +279,6 @@ export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
   try {
-    // Check /tmp first (user-uploaded)
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
@@ -295,7 +286,6 @@ export async function getDocumentFile(req, res) {
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
-    // Seed doc — serve from seed_documents (read-only, never deleted)
     if (filename) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
@@ -304,7 +294,6 @@ export async function getDocumentFile(req, res) {
         return fs.createReadStream(seedPath).pipe(res);
       }
 
-      // Fallback: scan seedDir
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
         const match = allPdfs.find(f => f.includes(path.parse(filename).name));
