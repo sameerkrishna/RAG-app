@@ -5,13 +5,17 @@ import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types
 const STORAGE_KEY = 'rag_conversations';
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
-// Module-level flag — lives in JS memory only.
-// true  = user navigated to KB and came back (SPA nav, module scope survives)
-// false = hard reload or new tab (module re-executes, flag resets to false)
+// Module-level flags — live in JS memory only.
+// Reset to false on hard reload/new tab (module re-executes).
+// Survive SPA navigation (module scope stays alive).
 let _isNavigationBack = false;
 
 export function markNavigationToKB() {
   _isNavigationBack = true;
+}
+
+export function resetNavigationFlag() {
+  _isNavigationBack = false;
 }
 
 export interface StoredConversation {
@@ -46,11 +50,11 @@ export function deleteConversation(id: string) {
 }
 
 function getInitialConversationState(): { messages: ChatMessage[]; activeConvId: string | null } {
-  // Only restore if this is a back-navigation from KB, not a hard reload
+  // Do NOT consume the flag here — StrictMode mounts twice, flag must survive both mounts.
+  // Flag is only reset explicitly via resetNavigationFlag() when user starts a new conversation.
   if (!_isNavigationBack) {
     return { messages: [], activeConvId: null };
   }
-  _isNavigationBack = false; // consume the flag
 
   try {
     const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);

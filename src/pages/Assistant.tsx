@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useChat, getAllConversations, deleteConversation, markNavigationToKB } from '../hooks/useChat';
+import { useChat, getAllConversations, deleteConversation, markNavigationToKB, resetNavigationFlag } from '../hooks/useChat';
 import type { StoredConversation } from '../hooks/useChat';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
@@ -38,8 +38,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
 
-  // On mount: if messages already loaded from initial state (navigation back), restore memory.
-  // Otherwise start fresh (hard reload or new tab).
+  // On mount: if messages already restored from initial state (navigation back), restore memory.
+  // Otherwise this is a hard reload — start fresh.
   useEffect(() => {
     if (activeConvId) {
       const conv = getAllConversations().find(c => c.id === activeConvId);
@@ -88,6 +88,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
   };
 
   const handleNewConversation = () => {
+    resetNavigationFlag(); // user explicitly starts fresh — clear the flag
     clearMessages();
     sessionStorage.removeItem(ACTIVE_CONV_KEY);
     setSourceDrawerOpen(false);
@@ -95,7 +96,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
   };
 
   const handleNavigateToKB = () => {
-    markNavigationToKB(); // set in-memory flag before leaving
+    markNavigationToKB(); // set flag before leaving so remount restores conv
     navigate('/knowledge');
   };
 
