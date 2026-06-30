@@ -53,9 +53,11 @@ app.get('/ping', (req, res) => {
 // before the user sends their first message, eliminating first-message latency
 // ===============================
 app.post('/api/session/init', async (req, res) => {
+  console.log('A')
   const sessionId = req.headers['x-session-id'];
-
+console.log('session id ': sessionId)
   if (!sessionId) {
+    console.log('returning')
     return res.status(400).json({ error: 'Missing x-session-id header', code: 'MISSING_SESSION' });
   }
 
