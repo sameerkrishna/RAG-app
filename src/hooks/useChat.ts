@@ -1,15 +1,76 @@
 import { useState, useCallback, useRef } from 'react';
 import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types';
 
+// ── localStorage helpers ───────────────────────────────────────────────────
+const STORAGE_KEY = 'rag_conversations';
+
+export interface StoredConversation {
+  id: string;           // uuid
+  title: string;        // first user message (truncated)
+  updatedAt: string;    // ISO timestamp — used for sorting
+  messages: ChatMessage[];
+}
+
+function loadAllConversations(): StoredConversation[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveAllConversations(convs: StoredConversation[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(convs));
+  } catch {
+    // localStorage full — silently ignore
+  }
+}
+
+export function getAllConversations(): StoredConversation[] {
+  return loadAllConversations().sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+}
+
+export function deleteConversation(id: string) {
+  saveAllConversations(loadAllConversations().filter(c => c.id !== id));
+}
+
+// ── hook ──────────────────────────────────────────────────────────────────
 export function useChat(sessionId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Persist current messages to localStorage under activeConvId
+  const persist = useCallback((msgs: ChatMessage[], convId: string) => {
+    if (msgs.length === 0) return;
+    const firstUserMsg = msgs.find(m => m.role === 'user');
+    if (!firstUserMsg) return;
+    const title = firstUserMsg.content.slice(0, 60) + (firstUserMsg.content.length > 60 ? '...' : '');
+    const all = loadAllConversations();
+    const idx = all.findIndex(c => c.id === convId);
+    const entry: StoredConversation = {
+      id: convId,
+      title,
+      updatedAt: new Date().toISOString(),
+      messages: msgs
+    };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    saveAllConversations(all);
+  }, []);
 
   const sendMessage = useCallback(async (query: string, waitFor?: Promise<any>) => {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
+
+    // Ensure we have a conversation ID — create one on first message
+    const convId = activeConvId ?? crypto.randomUUID();
+    if (!activeConvId) setActiveConvId(convId);
 
     setMessages(prev => [...prev, {
       id: userMessageId,
@@ -32,9 +93,6 @@ export function useChat(sessionId: string) {
     abortControllerRef.current = new AbortController();
 
     try {
-      // Wait for session init to complete before querying
-      // If already resolved (user typed slowly), this is instant
-      // If still pending (user typed fast), we wait here
       if (waitFor) await waitFor;
 
       const response = await fetch('/api/chat', {
@@ -47,14 +105,10 @@ export function useChat(sessionId: string) {
         signal: abortControllerRef.current.signal
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
+      if (!reader) throw new Error('No response body');
 
       const decoder = new TextDecoder();
       let accumulatedText = '';
@@ -92,12 +146,9 @@ export function useChat(sessionId: string) {
                   i += groupSize;
                   accumulatedText += group;
                   setMessages(prev => prev.map(m =>
-                    m.id === assistantMessageId
-                      ? { ...m, content: accumulatedText }
-                      : m
+                    m.id === assistantMessageId ? { ...m, content: accumulatedText } : m
                   ));
-                  const delay = Math.floor(Math.random() * 71) + 20;
-                  await new Promise(resolve => setTimeout(resolve, delay));
+                  await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 71) + 20));
                 }
 
               } else if (currentEventName === 'complete') {
@@ -106,30 +157,24 @@ export function useChat(sessionId: string) {
                 sources = payload.sources || [];
                 const isRefusal = payload.action === 'refusal';
 
-                setMessages(prev => prev.map(m =>
-                  m.id === assistantMessageId
-                    ? {
-                      ...m,
-                      content: payload.response || accumulatedText,
-                      citations,
-                      coverage,
-                      sources,
-                      isRefusal,
-                      isStreaming: false
-                    }
-                    : m
-                ));
+                setMessages(prev => {
+                  const next = prev.map(m =>
+                    m.id === assistantMessageId
+                      ? { ...m, content: payload.response || accumulatedText, citations, coverage, sources, isRefusal, isStreaming: false }
+                      : m
+                  );
+                  // Persist full message list including citations/sources after complete
+                  persist(next, convId);
+                  return next;
+                });
 
               } else if (currentEventName === 'error') {
                 setError(payload.message);
                 setMessages(prev => prev.map(m =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: payload.message, isStreaming: false }
-                    : m
+                  m.id === assistantMessageId ? { ...m, content: payload.message, isStreaming: false } : m
                 ));
 
               } else if (currentEventName === 'retrieval') {
-                // FIX: server sends level/score/topScore — not confidence
                 coverage = {
                   confidence: Math.round((payload.score ?? payload.topScore ?? 0) * 100),
                   topScore: payload.topScore,
@@ -139,43 +184,34 @@ export function useChat(sessionId: string) {
               }
 
               currentEventName = '';
-
-            } catch (e) {
-              // Ignore parse errors
-            }
+            } catch (e) { /* ignore parse errors */ }
           }
         }
       }
 
-      setMessages(prev => prev.map(m =>
-        m.id === assistantMessageId
-          ? { ...m, isStreaming: false }
-          : m
-      ));
+      setMessages(prev => {
+        const next = prev.map(m => m.id === assistantMessageId ? { ...m, isStreaming: false } : m);
+        persist(next, convId);
+        return next;
+      });
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Request aborted');
         return;
       }
-
       const errorMessage = err.message || 'An error occurred';
       setError(errorMessage);
-
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
-          ? {
-            ...m,
-            content: 'I encountered an error. Please try again.',
-            isStreaming: false
-          }
+          ? { ...m, content: 'I encountered an error. Please try again.', isStreaming: false }
           : m
       ));
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [sessionId]);
+  }, [sessionId, activeConvId, persist]);
 
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -185,7 +221,15 @@ export function useChat(sessionId: string) {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
+    setActiveConvId(null);
   }, []);
 
-  return { messages, isLoading, error, sendMessage, cancel, clearMessages };
+  // Restore a past conversation
+  const loadConversation = useCallback((conv: StoredConversation) => {
+    setMessages(conv.messages);
+    setActiveConvId(conv.id);
+    setError(null);
+  }, []);
+
+  return { messages, isLoading, error, activeConvId, sendMessage, cancel, clearMessages, loadConversation };
 }
