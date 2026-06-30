@@ -9,6 +9,8 @@ import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 
+const ACTIVE_CONV_KEY = 'rag_active_conv_id';
+
 interface AssistantProps {
   sessionId: string;
 }
@@ -35,10 +37,26 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
 
-  // Start with a fresh conversation on every app load
+  // On mount: restore last conversation if navigating back from KB, else start fresh
   useEffect(() => {
+    const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);
+    if (savedConvId) {
+      const conv = getAllConversations().find(c => c.id === savedConvId);
+      if (conv) {
+        loadConversation(conv);
+        return;
+      }
+    }
+    // No saved conv — true app load or conv was deleted, start fresh
     clearMessages();
   }, []);
+
+  // Persist activeConvId to sessionStorage whenever it changes
+  useEffect(() => {
+    if (activeConvId) {
+      sessionStorage.setItem(ACTIVE_CONV_KEY, activeConvId);
+    }
+  }, [activeConvId]);
 
   // Refresh sidebar list whenever activeConvId or message count changes
   useEffect(() => {
@@ -74,6 +92,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   const handleNewConversation = () => {
     clearMessages();
+    sessionStorage.removeItem(ACTIVE_CONV_KEY);
     setSourceDrawerOpen(false);
     setTimeout(() => inputRef.current?.focus(), 50);
   };
