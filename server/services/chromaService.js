@@ -34,7 +34,6 @@ function getCloudClient() {
   return cloudClient;
 }
 
-// Alias for backward compatibility
 function getClient() {
   return getCloudClient();
 }
@@ -226,7 +225,10 @@ export async function cleanupSessionCollections() {
     const client = getCloudClient();
     const collections = await client.listCollections();
 
-    const sessionCollectionNames = collections.filter(c => c.startsWith('session_'));
+    // FIX 1: collections is an array of objects with .name, not plain strings
+    const sessionCollectionNames = collections
+      .map(c => (typeof c === 'string' ? c : c.name))
+      .filter(name => name.startsWith('session_'));
 
     if (sessionCollectionNames.length === 0) {
       console.log('✅ No stale session collections found.');
@@ -236,12 +238,12 @@ export async function cleanupSessionCollections() {
     console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
 
     await Promise.allSettled(
-      sessionCollectionNames.map(async collectionName => {
+      sessionCollectionNames.map(async name => {
         try {
-          await client.deleteCollection({ name: collectionName });
-          console.log(`  ✅ Deleted: ${collectionName}`);
+          await client.deleteCollection({ name });
+          console.log(`  ✅ Deleted: ${name}`);
         } catch (err) {
-          console.warn(`  ⚠️ Could not delete ${collectionName}:`, err.message);
+          console.warn(`  ⚠️ Could not delete ${name}:`, err.message);
         }
       })
     );

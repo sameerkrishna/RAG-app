@@ -10,6 +10,7 @@ import documentsRouter from './api/documents.js';
 import chatRouter from './api/chat.js';
 import feedbackRouter from './api/feedback.js';
 import searchRouter from './api/search.js';
+import { getOrCreateSession, initSessionWithGlobalDocs } from './services/sessionService.js';
 
 const app = express();
 
@@ -40,11 +41,36 @@ app.use((req, res, next) => {
 // ===============================
 app.get('/ping', (req, res) => {
   console.log('✅ PING ROUTE EXECUTED');
-
   res.json({
     success: true,
     message: 'Express backend is alive'
   });
+});
+
+// ===============================
+// SESSION INIT ROUTE
+// Called by frontend on chat screen mount — seeds global docs into session
+// before the user sends their first message, eliminating first-message latency
+// ===============================
+app.post('/api/session/init', async (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+
+  if (!sessionId) {
+    return res.status(400).json({ error: 'Missing x-session-id header', code: 'MISSING_SESSION' });
+  }
+
+  getOrCreateSession(sessionId);
+
+  // Fire and don't block — client doesn't need to wait for full seeding
+  // But we do await so the client knows when it's ready
+  try {
+    await initSessionWithGlobalDocs(sessionId);
+    res.json({ ready: true, sessionId });
+  } catch (err) {
+    // Non-fatal — chat still works, seeding will retry on first message
+    console.warn('Session init warning:', err.message);
+    res.json({ ready: false, sessionId, warning: err.message });
+  }
 });
 
 // ===============================
@@ -66,7 +92,6 @@ console.log('✅ Routers mounted');
 app.use((err, req, res, next) => {
   console.error('ERROR MIDDLEWARE');
   console.error(err);
-
   res.status(500).json({
     error: err.message,
     stack: err.stack

@@ -2,7 +2,6 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { buildPrompt, getRefusalResponse } from './promptService.js';
 import { LLMUnavailableError } from '../utils/errors.js';
 
-// ✅ Lazy — read inside the function, not at module top level
 let genAI = null;
 
 function getGenAI() {
@@ -36,36 +35,28 @@ function getFallbackModel() {
   return fallbackModel;
 }
 
-async function generateWithModel(model, prompt, signal) {
-  const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.7,
-      topP: 0.95,
-      maxOutputTokens: 2048
-    }
-  }, { signal });
-
-  return result.response.text();
-}
-
 export async function generateResponse(prompt) {
+  // FIX 6: create controller and actually pass signal to generateContent
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
   try {
-    const result = await getPrimaryModel().generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.95,
-        maxOutputTokens: 2048
-      }
-    });
+    const result = await getPrimaryModel().generateContent(
+      {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topP: 0.95,
+          maxOutputTokens: 2048
+        }
+      },
+      { signal: controller.signal }  // FIX 6: pass signal
+    );
 
     clearTimeout(timeoutId);
     return result.response.text();
   } catch (primaryError) {
+    clearTimeout(timeoutId);
     console.error('Primary model failed:', primaryError.message);
 
     try {
@@ -78,7 +69,6 @@ export async function generateResponse(prompt) {
         }
       });
 
-      clearTimeout(timeoutId);
       return fallbackResult.response.text();
     } catch (fallbackError) {
       console.error('Fallback model also failed:', fallbackError.message);
@@ -94,7 +84,6 @@ export async function* streamResponse(prompt) {
 
   while (retries < maxRetries) {
     try {
-      // ✅ FIX: Create AbortController per attempt for timeout signalling
       const controller = new AbortController();
 
       const result = await model.generateContentStream({
@@ -107,13 +96,9 @@ export async function* streamResponse(prompt) {
       });
 
       let firstToken = true;
-
-      // ✅ FIX: Use controller.abort() instead of throw inside setTimeout
-      // (throw inside setTimeout is uncaught and silently kills the stream)
       const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
 
       for await (const chunk of result.stream) {
-        // ✅ FIX: Check abort signal on each iteration
         if (controller.signal.aborted) {
           clearTimeout(firstTokenTimeout);
           throw new Error('First token timeout — no response from model');
@@ -123,13 +108,12 @@ export async function* streamResponse(prompt) {
         if (text) {
           if (firstToken) {
             firstToken = false;
-            clearTimeout(firstTokenTimeout); // got first token, cancel timeout
+            clearTimeout(firstTokenTimeout);
           }
           yield { type: 'token', text };
         }
       }
 
-      // Stream completed naturally — clean up timeout
       clearTimeout(firstTokenTimeout);
       return { success: true };
 
@@ -142,7 +126,6 @@ export async function* streamResponse(prompt) {
         throw new LLMUnavailableError();
       }
 
-      // Switch to fallback model on retry
       model = getFallbackModel();
     }
   }

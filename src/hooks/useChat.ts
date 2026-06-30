@@ -7,7 +7,7 @@ export function useChat(sessionId: string) {
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const sendMessage = useCallback(async (query: string) => {
+  const sendMessage = useCallback(async (query: string, waitFor?: Promise<any>) => {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
@@ -32,6 +32,11 @@ export function useChat(sessionId: string) {
     abortControllerRef.current = new AbortController();
 
     try {
+      // Wait for session init to complete before querying
+      // If already resolved (user typed slowly), this is instant
+      // If still pending (user typed fast), we wait here
+      if (waitFor) await waitFor;
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -104,14 +109,14 @@ export function useChat(sessionId: string) {
                 setMessages(prev => prev.map(m =>
                   m.id === assistantMessageId
                     ? {
-                        ...m,
-                        content: payload.response || accumulatedText,
-                        citations,
-                        coverage,
-                        sources,
-                        isRefusal,
-                        isStreaming: false
-                      }
+                      ...m,
+                      content: payload.response || accumulatedText,
+                      citations,
+                      coverage,
+                      sources,
+                      isRefusal,
+                      isStreaming: false
+                    }
                     : m
                 ));
 
@@ -124,9 +129,12 @@ export function useChat(sessionId: string) {
                 ));
 
               } else if (currentEventName === 'retrieval') {
+                // FIX: server sends level/score/topScore — not confidence
                 coverage = {
-                  confidence: payload.confidence,
-                  topScore: payload.topScore
+                  confidence: Math.round((payload.score ?? payload.topScore ?? 0) * 100),
+                  topScore: payload.topScore,
+                  level: payload.level,
+                  score: payload.score
                 };
               }
 
@@ -157,10 +165,10 @@ export function useChat(sessionId: string) {
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? {
-              ...m,
-              content: 'I encountered an error. Please try again.',
-              isStreaming: false
-            }
+            ...m,
+            content: 'I encountered an error. Please try again.',
+            isStreaming: false
+          }
           : m
       ));
     } finally {

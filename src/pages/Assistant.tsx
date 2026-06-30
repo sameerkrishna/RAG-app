@@ -20,14 +20,34 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
+  // Holds the session init promise — sendMessage awaits this before querying
+  // so even if user types immediately, we wait for seeding to complete first
+  const sessionInitRef = useRef<Promise<any> | null>(null);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Fire session init as soon as chat screen mounts
+  // Stores the promise so sendMessage can await it if needed
+  useEffect(() => {
+    sessionInitRef.current = fetch('/api/session/init', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-session-id': sessionId
+      }
+    }).catch(err => {
+      // Non-fatal — chat.js will fall back to seeding on first message
+      console.warn('Session pre-init failed:', err.message);
+    });
+  }, [sessionId]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-    sendMessage(input.trim());
+    // Pass init promise — sendMessage awaits it if still pending, instant if done
+    sendMessage(input.trim(), sessionInitRef.current ?? undefined);
     setInput('');
   };
 
@@ -44,7 +64,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
         headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId },
         body: JSON.stringify({ query: lastQuery })
       });
-
       const data = await response.json();
       if (data.success && data.answer) {
         window.dispatchEvent(new CustomEvent('websearch-result', {

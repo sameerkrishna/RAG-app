@@ -5,7 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
 import pdf from 'pdf-parse';
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from 'url';;
 import { sanitizeFilename, validatePDFFile, validateFileSize } from '../utils/sanitize.js';
 import {
   CorruptedPDFError,
@@ -14,23 +14,31 @@ import {
   TooManyPDFsError,
   DuplicateFileError
 } from '../utils/errors.js';
-import { getGlobalCollection, getSessionCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
+import { getSessionCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
 import { chunkText, cleanText } from '../utils/chunker.js';
 import { generateEmbeddings } from '../services/embeddingService.js';
-import { getOrCreateSession, canAcceptUpload, addDocumentToSession, removeDocumentFromSession, getAllDocuments } from '../services/sessionService.js';
+import {
+  getOrCreateSession,
+  canAcceptUpload,
+  addDocumentToSession,
+  removeDocumentFromSession,
+  getAllDocuments
+} from '../services/sessionService.js';
+import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
 
 const router = Router();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// All uploaded PDFs go to /tmp — never to seed_documents
 const uploadDir = '/tmp/uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Seed PDFs are at repo root — two levels up from server/api/
-const seedDir = path.resolve(__dirname, '../../');
+// Seed PDFs live here — only used for serving the file (View PDF), never written to
+const seedDir = path.resolve(__dirname, '../../seed_documents');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -71,9 +79,9 @@ async function parsePDFWithBoundaryMap(filePath) {
 
     const totalPages = pages.length;
     const cleanedPages = pages.map(p => cleanText(p));
-
     const pageMap = [];
     let charPos = 0;
+
     for (let i = 0; i < cleanedPages.length; i++) {
       pageMap.push({ page: i + 1, start: charPos, end: charPos + cleanedPages[i].length });
       charPos += cleanedPages[i].length + 1;
@@ -104,7 +112,9 @@ export async function handleUpload(req, res) {
     const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
     const cleanFilename = sanitizeFilename(file.originalname);
 
-    if (session.documents.length >= maxPDFs) {
+    // Count only user-uploaded docs (not global seeds) toward the limit
+    const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
+    if (uploadedCount >= maxPDFs) {
       fs.unlinkSync(file.path);
       throw new TooManyPDFsError(maxPDFs);
     }
@@ -146,7 +156,7 @@ export async function handleUpload(req, res) {
         total_chunks: rawChunks.length,
         page_number: getPageNumber(chunk.charStart, pageMap),
         total_pages: totalPages,
-        source_type: 'session_upload',
+        source_type: 'session_upload',  // always session_upload for user uploads
         upload_timestamp: new Date().toISOString(),
         char_start: chunk.charStart,
         char_end: chunk.charEnd,
@@ -154,6 +164,7 @@ export async function handleUpload(req, res) {
       }
     }));
 
+    // Upload always targets session collection — never global
     const collection = await getSessionCollection(sessionId);
 
     const embeddings = await generateEmbeddings(
@@ -183,6 +194,9 @@ export async function handleUpload(req, res) {
       embeddings.map(e => e.id)
     );
 
+    // Invalidate retrieval cache so next query picks up new vectors
+    invalidateSessionCollectionCache(sessionId);
+
     addDocumentToSession(sessionId, {
       id: documentId,
       filename: cleanFilename,
@@ -191,6 +205,7 @@ export async function handleUpload(req, res) {
       chunkCount: embeddings.length
     });
 
+    // File stays in /tmp — not deleted after upload
     res.status(201).json({
       success: true,
       document: {
@@ -232,18 +247,24 @@ export async function deleteDocument(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
   try {
+    // Only delete from session collection — never touches global collection
     if (sessionId) {
       const collection = await getSessionCollection(sessionId);
       if (collection) {
         const count = await deleteDocumentVectors(collection, documentId);
-        if (count > 0) removeDocumentFromSession(sessionId, documentId);
+        if (count > 0) {
+          removeDocumentFromSession(sessionId, documentId);
+          invalidateSessionCollectionCache(sessionId);
+        }
       }
     }
 
-    try {
-      const globalCollection = await getGlobalCollection();
-      await deleteDocumentVectors(globalCollection, documentId);
-    } catch (e) { /* not in global */ }
+    // Delete the uploaded file from /tmp only (never from seed_documents)
+    const tmpPath = path.join(uploadDir, `${documentId}.pdf`);
+    if (fs.existsSync(tmpPath)) {
+      fs.unlinkSync(tmpPath);
+      console.log(`🗑️  Deleted tmp file: ${tmpPath}`);
+    }
 
     res.json({ success: true, documentId });
   } catch (error) {
@@ -257,7 +278,7 @@ export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
   try {
-    // Step 1: session upload by UUID
+    // Check /tmp first (user-uploaded)
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
@@ -265,7 +286,7 @@ export async function getDocumentFile(req, res) {
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
-    // Step 2: seed doc — match by original filename from query param
+    // Seed doc — serve from seed_documents (read-only, never deleted)
     if (filename) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
@@ -273,16 +294,18 @@ export async function getDocumentFile(req, res) {
         res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
         return fs.createReadStream(seedPath).pipe(res);
       }
-    }
 
-    // Step 3: scan all PDFs in seedDir as last resort
-    const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
-    const match = allPdfs.find(f => filename && f.includes(path.parse(filename).name));
-    if (match) {
-      const matchPath = path.join(seedDir, match);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${match}"`);
-      return fs.createReadStream(matchPath).pipe(res);
+      // Fallback: scan seedDir
+      if (fs.existsSync(seedDir)) {
+        const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
+        const match = allPdfs.find(f => f.includes(path.parse(filename).name));
+        if (match) {
+          const matchPath = path.join(seedDir, match);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="${match}"`);
+          return fs.createReadStream(matchPath).pipe(res);
+        }
+      }
     }
 
     return res.status(404).json({ error: 'Document file not found', code: 'FILE_NOT_FOUND' });
