@@ -37,18 +37,16 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
 
-  // On mount: restore last conversation if navigating back from KB, else start fresh
+  // On mount: if no saved conv in sessionStorage, this is a true app load — start fresh
   useEffect(() => {
     const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);
-    if (savedConvId) {
-      const conv = getAllConversations().find(c => c.id === savedConvId);
-      if (conv) {
-        loadConversation(conv);
-        return;
-      }
+    if (!savedConvId) {
+      clearMessages();
+      return;
     }
-    // No saved conv — true app load or conv was deleted, start fresh
-    clearMessages();
+    // Saved conv exists — restore memory on server for context
+    const conv = getAllConversations().find(c => c.id === savedConvId);
+    if (conv) loadConversation(conv);
   }, []);
 
   // Persist activeConvId to sessionStorage whenever it changes

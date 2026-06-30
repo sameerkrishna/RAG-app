@@ -3,6 +3,7 @@ import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types
 
 // ── localStorage helpers ───────────────────────────────────────────────────
 const STORAGE_KEY = 'rag_conversations';
+const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
 export interface StoredConversation {
   id: string;
@@ -35,14 +36,27 @@ export function deleteConversation(id: string) {
   saveAllConversations(loadAllConversations().filter(c => c.id !== id));
 }
 
+function getInitialConversationState(): { messages: ChatMessage[]; activeConvId: string | null } {
+  try {
+    const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);
+    if (savedConvId) {
+      const conv = loadAllConversations().find(c => c.id === savedConvId);
+      if (conv) return { messages: conv.messages, activeConvId: conv.id };
+    }
+  } catch {}
+  return { messages: [], activeConvId: null };
+}
+
 // ── hook ──────────────────────────────────────────────────────────────────
 export function useChat(sessionId: string) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const initialState = getInitialConversationState();
+
+  const [messages, setMessages] = useState<ChatMessage[]>(initialState.messages);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [activeConvId, setActiveConvId] = useState<string | null>(initialState.activeConvId);
 
-  const activeConvIdRef = useRef<string | null>(null);
+  const activeConvIdRef = useRef<string | null>(initialState.activeConvId);
   // Guard: track which convId has already had memory restored to avoid duplicate replays
   const restoredConvIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
