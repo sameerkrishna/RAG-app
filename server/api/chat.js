@@ -1,16 +1,13 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { retrieveForQuery, generateCitations, shouldShowRefusal, formatContextForPrompt } from '../services/retrievalService.js';
-import { streamResponse, getRefusalText } from '../services/geminiService.js';
+import { retrieveForQuery, generateCitations, formatContextForPrompt } from '../services/retrievalService.js';
+import { streamResponse } from '../services/geminiService.js';
 import { addTurnWithCitations, getRecentTurns } from '../services/memoryService.js';
 import { getOrCreateSession } from '../services/sessionService.js';
 
 const router = Router();
 
 const OUT_OF_SCOPE_PATTERN = /don't have information|do not have information|not in my knowledge|can't find|cannot find|no information|knowledge base doesn't|not covered|outside.*knowledge/i;
-
-// Greetings and small talk — skip refusal gate, let LLM handle naturally
-const GREETING_PATTERN = /^(hi+|he+y|hello+|howdy|sup|yo|thanks|thank you|bye|good morning|good evening|good afternoon|how are you|what's up|whats up)[\s!?.,'-]*$/i;
 
 function cleanExcerpt(text) {
   return text
@@ -75,8 +72,7 @@ export async function handleChatStream(req, res) {
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    const isGreeting = GREETING_PATTERN.test(query.trim());
-    const expandedQuery = isGreeting ? query : expandQuery(query, sessionId);
+    const expandedQuery = expandQuery(query, sessionId);
     const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
 
     sendEvent('retrieval', {
@@ -97,22 +93,6 @@ export async function handleChatStream(req, res) {
       sourceType: r.source_type
     }));
 
-    // Greetings skip refusal gate — LLM handles them naturally
-    if (!isGreeting && shouldShowRefusal(coverage)) {
-      const refusalText = getRefusalText ? getRefusalText() : "I don't have information on that topic in my knowledge base.";
-      addTurnWithCitations(sessionId, 'assistant', refusalText, [], coverage, answerId);
-      sendEvent('complete', {
-        answerId,
-        response: refusalText,
-        citations: [],
-        coverage,
-        sources: [],
-        action: 'refusal'
-      });
-      res.end();
-      return;
-    }
-
     sendEvent('status', { stage: 'generating', message: 'Generating response...' });
 
     const contextText = formatContextForPrompt(results);
@@ -121,23 +101,29 @@ export async function handleChatStream(req, res) {
       .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
       .join('\n\n');
 
-    const prompt = `You are an AI Knowledge Assistant. Answer ONLY using the numbered context below.
-If the answer is not in the context, politely say you don't have information on that topic in your knowledge base. Do NOT answer from general knowledge. Do NOT add citations if the context is not relevant.
+    const prompt = `You are an AI Knowledge Assistant. Your behaviour depends on the type of input:
+
+1. GREETINGS & SMALL TALK (hi, hello, how are you, do you have a life, jokes, general chat):
+   - Respond warmly and naturally. Do NOT mention the knowledge base or documents at all.
+   - Do NOT add any citations.
+
+2. FACTUAL QUESTIONS WITH CONTEXT (context below is relevant):
+   - Answer strictly using the numbered context provided.
+   - Cite sources inline as [1] [2] — always separate brackets, never [1, 2].
+   - Only cite numbers you actually used.
+
+3. FACTUAL QUESTIONS WITHOUT CONTEXT (context is empty or irrelevant):
+   - Politely decline in your own words — vary your phrasing naturally.
+   - Do NOT add citations.
+   - Do NOT use a fixed template or robotic response.
 
 CONTEXT:
-${contextText}
+${contextText || '(No relevant documents found in knowledge base)'}
 
 CONVERSATION HISTORY:
 ${memoryContext}
 
-CURRENT QUESTION: ${query}
-
-Rules:
-- Cite sources inline as [1] [2] only for context chunks you actually used
-- Always cite as separate brackets [1] [2], never as [1, 2]
-- Never add citation numbers you did not use
-- For greetings or small talk, respond naturally and briefly — do NOT mention the knowledge base topic, do NOT reference any documents, do NOT add citations
-- If context is irrelevant, decline politely with no citations`;
+CURRENT QUESTION: ${query}`;
 
     let fullResponse = '';
 
@@ -152,21 +138,20 @@ Rules:
       }
     }
 
-    // Extract citation indices actually used in the response
     const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
       .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
       .filter((v, i, a) => a.indexOf(v) === i);
 
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
 
-    // Filter citations by cited indices, then re-number sequentially
     const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
+    // ✅ No renumbering — keep original indices to match answer text exactly
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
-      : matchedCitations.map((c, i) => ({ ...c, index: i + 1 }));
+      : matchedCitations;
 
-    // Match sources by chunkId — always aligned with finalCitations
+    // ✅ Match sources by chunkId — always aligned with finalCitations
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
