@@ -33,8 +33,11 @@ export interface ChatMessage {
 }
 
 export interface CoverageInfo {
-  confidence: number;   // 0–100, e.g. 47
-  topScore: number;     // raw score e.g. 0.47
+  confidence: number;   // 0-100 percentage
+  topScore: number;     // highest chunk similarity score
+  level?: 'high' | 'medium' | 'low';
+  score?: number;
+  reason?: string;
 }
 
 export interface Document {

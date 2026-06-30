@@ -58,9 +58,11 @@ export default function SourceDrawer({ isOpen, onClose, sources }: SourceDrawerP
                   </span>
                 </div>
 
-                <p className="text-sm text-muted-foreground line-clamp-4">
-                  {source.excerpt}
-                </p>
+                {source.excerpt && (
+                  <blockquote className="border-l-2 border-muted pl-3 text-xs text-muted-foreground italic line-clamp-3">
+                    "{source.excerpt}"
+                  </blockquote>
+                )}
 
                 <div className="flex items-center gap-2">
                   <Button
@@ -74,7 +76,7 @@ export default function SourceDrawer({ isOpen, onClose, sources }: SourceDrawerP
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => window.open(`/api/documents/${source.documentId}/file`, '_blank')}
+                    onClick={() => window.open(`/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`, '_blank')}
                   >
                     <ExternalLink className="w-3 h-3 mr-1" />
                     View PDF
