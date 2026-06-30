@@ -284,6 +284,7 @@ export async function getDocumentFile(req, res) {
 console.log('Upload path exists:', fs.existsSync(uploadPath));
 console.log('Seed dir:', seedDir);
 console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
+    
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
@@ -293,6 +294,11 @@ console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
     if (filename) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
+         const stat = fs.statSync(seedPath);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Content-Disposition', contentDisposition(filename));
+  return fs.createReadStream(seedPath).pipe(res);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', contentDisposition(filename));
         return fs.createReadStream(seedPath).pipe(res);
