@@ -11,39 +11,28 @@ RULES:
 5. Maintain conversation continuity but don't repeat information unnecessarily.
 6. Format responses in clear, readable markdown.`;
 
-const REFUSAL_MESSAGE = "I don't have enough information in the knowledge base to answer that confidently. Try uploading relevant documents, or ask me a general question.";
 export function buildPrompt({ query, context, memoryContext, coverage }) {
   const parts = [];
-
-  // System instruction
   parts.push(SYSTEM_INSTRUCTION);
-
-  // Past conversation if available
   if (memoryContext) {
     parts.push('\n\n--- PREVIOUS CONVERSATION ---\n');
     parts.push(memoryContext);
     parts.push('\n--- END PREVIOUS CONVERSATION ---\n');
   }
-
-  // Retrieved context
   if (context) {
     parts.push('\n\n--- RELEVANT CONTEXT FROM KNOWLEDGE BASE ---\n');
     parts.push(context);
     parts.push('\n--- END CONTEXT ---\n');
   }
-
-  // Current question
   parts.push('\n\n--- CURRENT QUESTION ---\n');
   parts.push(query);
   parts.push('\n\nRemember: Answer based ONLY on the provided context. Use [1], [2], etc. for citations. If the context is insufficient, say so clearly.');
-
   return parts.join('');
 }
 
 export function buildStreamingPrompt(query, retrievedResults, sessionId, memoryService) {
   const memoryContext = formatMemoryForPrompt(sessionId);
   const contextString = formatContextForPrompt(retrievedResults);
-
   return buildPrompt({
     query,
     context: contextString,
@@ -53,7 +42,8 @@ export function buildStreamingPrompt(query, retrievedResults, sessionId, memoryS
 }
 
 export function getRefusalResponse() {
-  return REFUSAL_MESSAGE;
+  // No longer used — LLM generates its own natural refusal
+  return null;
 }
 
 export function getSystemInstruction() {
@@ -81,14 +71,11 @@ export function formatGenerationConfig(customConfig = {}) {
 }
 
 export function extractSourcesFromResponse(response) {
-  // Extract citation patterns like [1], [2], etc.
   const citationPattern = /\[(\d+)\]/g;
   const citations = new Set();
   let match;
-
   while ((match = citationPattern.exec(response)) !== null) {
     citations.add(parseInt(match[1]));
   }
-
   return Array.from(citations).sort((a, b) => a - b);
 }
