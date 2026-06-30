@@ -50,6 +50,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Block submit if loading or empty — but input itself stays enabled for typing
     if (!input.trim() || isLoading) return;
     sendMessage(input.trim(), sessionInitRef.current ?? undefined);
     setInput('');
@@ -96,14 +97,13 @@ export default function Assistant({ sessionId }: AssistantProps) {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
 
-      {/* ── Sidebar ─────────────────────────────────────────────── */}
+      {/* Sidebar */}
       <aside
         className={cn(
           'hidden md:flex flex-shrink-0 flex-col border-r bg-secondary/30 transition-all duration-300',
           sidebarCollapsed ? 'w-[56px]' : 'w-[260px]'
         )}
       >
-        {/* Logo row */}
         <div className={cn(
           'flex h-14 flex-shrink-0 items-center border-b px-3',
           sidebarCollapsed ? 'justify-center' : 'gap-3'
@@ -131,7 +131,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
           </button>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 overflow-y-auto p-2">
           <button
             onClick={handleNewConversation}
@@ -177,13 +176,11 @@ export default function Assistant({ sessionId }: AssistantProps) {
         </div>
       </aside>
 
-      {/* ── Main + Sources side-by-side ──────────────────────────── */}
+      {/* Main + Sources side-by-side */}
       <div className="flex flex-1 min-w-0 overflow-hidden">
 
-        {/* Main Chat */}
         <main className="flex flex-1 flex-col min-w-0">
 
-          {/* ── Empty / Greeting state ── */}
           {isFirstMessage ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4">
               <h1 className="text-3xl font-semibold mb-8 tracking-tight">
@@ -199,7 +196,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
                     placeholder="Ask me anything..."
                     className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                     autoFocus
-                    disabled={isLoading}
                   />
                   <Button
                     type="submit"
@@ -217,7 +213,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
             </div>
           ) : (
             <>
-              {/* Messages */}
               <div
                 ref={messagesContainerRef}
                 className="flex-1 overflow-y-auto px-6 pb-28 pt-6"
@@ -248,7 +243,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
                 </div>
               </div>
 
-              {/* Sticky input */}
+              {/* Sticky input — input always enabled, only submit gated on isLoading */}
               <div className="flex flex-shrink-0 flex-col border-t bg-background">
                 <form
                   onSubmit={handleSubmit}
@@ -262,10 +257,11 @@ export default function Assistant({ sessionId }: AssistantProps) {
                       onChange={e => setInput(e.target.value)}
                       placeholder="Ask a question..."
                       className="w-full rounded-xl border bg-background px-4 py-3 pr-12 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                      disabled={isLoading}
+                      // NOT disabled — user can type ahead while response streams
                     />
                   </div>
                   {isLoading ? (
+                    // Show cancel button while loading
                     <Button type="button" variant="outline" size="icon" onClick={cancel} className="h-11 w-11 flex-shrink-0 rounded-xl">
                       <X className="h-4 w-4" />
                     </Button>
@@ -285,7 +281,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
           )}
         </main>
 
-        {/* ── Inline Sources Panel ─────────────────────────────── */}
+        {/* Inline Sources Panel */}
         {sourceDrawerOpen && (
           <SourceDrawer
             isOpen={sourceDrawerOpen}
