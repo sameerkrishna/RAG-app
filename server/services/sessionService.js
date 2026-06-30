@@ -73,9 +73,10 @@ export async function initSessionWithGlobalDocs(sessionId) {
     const globalCollection = await getGlobalCollection();
     const sessionCollection = await getSessionCollection(sessionId);
 
-    // Fetch ALL vectors from global (documents + embeddings + metadatas + ids)
+    // Fetch ALL vectors from global — explicit limit bypasses Chroma's default 300 cap
     const allGlobal = await globalCollection.get({
-      include: ['embeddings', 'documents', 'metadatas']
+      include: ['embeddings', 'documents', 'metadatas'],
+      limit: 10000
     });
 
     if (!allGlobal.ids || allGlobal.ids.length === 0) {
