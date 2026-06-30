@@ -138,31 +138,59 @@ CURRENT QUESTION: ${query}`;
       }
     }
 
-    const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
-      .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
-      .filter((v, i, a) => a.indexOf(v) === i);
+    // Extract cited indices in ORDER OF FIRST APPEARANCE
+    const citedIndices = [];
+    const seen = new Set();
+    for (const match of fullResponse.matchAll(/\[(\d+)\]/g)) {
+      const num = parseInt(match[1]);
+      if (!seen.has(num)) {
+        seen.add(num);
+        citedIndices.push(num);
+      }
+    }
 
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
 
     const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
-    // No renumbering — keep original indices to match answer text exactly
+    // Remap old LLM indices → new sequential indices by first appearance
+    const indexMap = new Map();
+    citedIndices.forEach((oldIdx, i) => {
+      indexMap.set(oldIdx, i + 1);
+    });
+
+    // Rewrite response text so [3][2][1] becomes [1][2][3]
+    const rewrittenResponse = fullResponse.replace(/\[(\d+)\]/g, (match, num) => {
+      const newIdx = indexMap.get(parseInt(num));
+      return newIdx !== undefined ? `[${newIdx}]` : match;
+    });
+
+    // Remap citations with new indices, sorted by first appearance
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
-      : matchedCitations;
+      : matchedCitations
+          .map(c => ({ ...c, index: indexMap.get(c.index) }))
+          .filter(c => c.index !== undefined)
+          .sort((a, b) => a.index - b.index);
 
-    // Match sources by chunkId — always aligned with finalCitations
+    // Match sources by chunkId, sorted in same order as finalCitations
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
       ? []
-      : sources.filter(s => matchedChunkIds.has(s.chunkId));
+      : sources
+          .filter(s => matchedChunkIds.has(s.chunkId))
+          .sort((a, b) => {
+            const idxA = finalCitations.find(c => c.chunkId === a.chunkId)?.index ?? 99;
+            const idxB = finalCitations.find(c => c.chunkId === b.chunkId)?.index ?? 99;
+            return idxA - idxB;
+          });
 
-    addTurnWithCitations(sessionId, 'assistant', fullResponse, finalCitations, coverage, answerId);
+    addTurnWithCitations(sessionId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
     sendEvent('complete', {
       answerId,
-      response: fullResponse,
+      response: rewrittenResponse,
       citations: finalCitations,
       coverage,
       sources: finalSources
@@ -192,9 +220,7 @@ export async function getSources(req, res) {
     t.role === 'assistant' && t.citations?.length > 0
   );
 
-  if (fallback) {
-    return res.json({ sources: fallback.citations });
-  }
+  if (fallback) return res.json({ sources: fallback.citations });
 
   res.status(404).json({ error: 'Sources not found', code: 'SOURCES_NOT_FOUND' });
 }
