@@ -28,14 +28,9 @@ function getCloudClient() {
 
     const clientOptions = { apiKey, tenant, database };
     if (host) clientOptions.host = host;
-
     cloudClient = new CloudClient(clientOptions);
   }
   return cloudClient;
-}
-
-function getClient() {
-  return getCloudClient();
 }
 
 export async function getGlobalCollection() {
@@ -60,14 +55,31 @@ export async function getGlobalCollection() {
   return globalCollection;
 }
 
+/**
+ * Gets or creates a session collection.
+ * - If it already exists on Chroma Cloud (e.g. server restart, same browser tab): reuses it.
+ * - If it doesn't exist (new session UUID on fresh app load): creates it fresh.
+ * Seeding logic in sessionService decides whether to populate it.
+ */
 export async function getSessionCollection(sessionId) {
   if (sessionCollections.has(sessionId)) {
     return sessionCollections.get(sessionId);
   }
+
   const client = getCloudClient();
   const collectionName = `session_${sessionId}`;
+
+  let collection;
   try {
-    const collection = await client.getOrCreateCollection({
+    // Try to get existing collection first (server restart case)
+    collection = await client.getCollection({
+      name: collectionName,
+      embeddingFunction: null
+    });
+    console.log(`♻️  Session collection exists, reusing: ${collectionName}`);
+  } catch {
+    // Doesn't exist — create fresh (normal new session case)
+    collection = await client.createCollection({
       name: collectionName,
       metadata: {
         type: 'session_upload',
@@ -76,13 +88,11 @@ export async function getSessionCollection(sessionId) {
       },
       embeddingFunction: null
     });
-    sessionCollections.set(sessionId, collection);
-    console.log(`✅ Session collection ready: ${collectionName}`);
-    return collection;
-  } catch (error) {
-    console.error(`Failed to create session collection ${collectionName}:`, error);
-    throw error;
+    console.log(`✅ Session collection created: ${collectionName}`);
   }
+
+  sessionCollections.set(sessionId, collection);
+  return collection;
 }
 
 export async function deleteSessionCollection(sessionId) {
@@ -225,7 +235,6 @@ export async function cleanupSessionCollections() {
     const client = getCloudClient();
     const collections = await client.listCollections();
 
-    // FIX 1: collections is an array of objects with .name, not plain strings
     const sessionCollectionNames = collections
       .map(c => (typeof c === 'string' ? c : c.name))
       .filter(name => name.startsWith('session_'));

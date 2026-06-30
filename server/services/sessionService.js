@@ -11,7 +11,6 @@ const sessions = new Map();
 const MAX_PDFS_PER_SESSION = parseInt(process.env.MAX_PDFS_PER_SESSION) || 3;
 const MAX_UPLOAD_SIZE_MB = parseInt(process.env.MAX_UPLOAD_SIZE_MB) || 5;
 
-// Track which sessions have been seeded from global collection
 const seededSessions = new Set();
 
 export function createSession() {
@@ -23,7 +22,6 @@ export function createSession() {
     documents: [],
     timeoutMinutes: DEFAULT_TIMEOUT_MINUTES
   };
-
   sessions.set(sessionId, session);
   return session;
 }
@@ -60,12 +58,14 @@ export function deleteSession(sessionId) {
 }
 
 /**
- * On session start: copy all global collection vectors into the session collection.
- * This only runs ONCE per sessionId — skipped on subsequent calls.
+ * On session start: seed the session collection from global.
+ * - getSessionCollection() handles getCollection vs createCollection:
+ *     new UUID  → collection not found on Chroma → createCollection → needs seeding
+ *     server restart, same tab → collection found → reuse → skip seeding (count check)
  */
 export async function initSessionWithGlobalDocs(sessionId) {
-  console.log("In the init sessionwith gobaldocs function")
-  if (seededSessions.has(sessionId)) return; // already done
+  console.log("In the init sessionwith gobaldocs function");
+  if (seededSessions.has(sessionId)) return;
 
   try {
     console.log(`🌱 Seeding session ${sessionId} from global collection...`);
@@ -73,51 +73,56 @@ export async function initSessionWithGlobalDocs(sessionId) {
     const globalCollection = await getGlobalCollection();
     const sessionCollection = await getSessionCollection(sessionId);
 
-    // Fetch ALL vectors from global — explicit limit bypasses Chroma's default 300 cap
-    const allGlobal = await globalCollection.get({
-      include: ['embeddings', 'documents', 'metadatas'],
-      limit: 10000
-    });
+    // Paginate global collection — Chroma Cloud hard cap is 300/call
+    const BATCH_SIZE = 300;
+    let offset = 0;
+    const allIds = [], allEmbeddings = [], allDocuments = [], allMetadatas = [];
 
-    if (!allGlobal.ids || allGlobal.ids.length === 0) {
+    while (true) {
+      const batch = await globalCollection.get({
+        include: ['embeddings', 'documents', 'metadatas'],
+        limit: BATCH_SIZE,
+        offset
+      });
+      if (!batch.ids || batch.ids.length === 0) break;
+      allIds.push(...batch.ids);
+      allEmbeddings.push(...batch.embeddings);
+      allDocuments.push(...batch.documents);
+      allMetadatas.push(...batch.metadatas);
+      if (batch.ids.length < BATCH_SIZE) break;
+      offset += BATCH_SIZE;
+    }
+
+    if (allIds.length === 0) {
       console.log('⚠️  Global collection is empty — nothing to seed.');
       seededSessions.add(sessionId);
       return;
     }
 
-    // Check which ids already exist in session (avoid duplicate inserts on reconnect)
-    const existing = await sessionCollection.get({ ids: allGlobal.ids });
-    const existingIds = new Set(existing.ids || []);
-    const newIds = allGlobal.ids.filter(id => !existingIds.has(id));
-
-    if (newIds.length === 0) {
-      console.log(`✅ Session ${sessionId} already has all global vectors.`);
+    // Skip if session collection already has all vectors (server restart, same tab)
+    const existingCount = await sessionCollection.count();
+    if (existingCount >= allIds.length) {
+      console.log(`✅ Session ${sessionId} already fully seeded (${existingCount} vectors). Skipping.`);
       seededSessions.add(sessionId);
       return;
     }
 
-    const newIndices = allGlobal.ids
-      .map((id, i) => i)
-      .filter(i => newIds.includes(allGlobal.ids[i]));
-
+    // Fresh collection — add all global vectors
     await sessionCollection.add({
-      ids: newIndices.map(i => allGlobal.ids[i]),
-      embeddings: newIndices.map(i => allGlobal.embeddings[i]),
-      documents: newIndices.map(i => allGlobal.documents[i]),
-      metadatas: newIndices.map(i => ({
-        ...allGlobal.metadatas[i],
-        source_type: 'global'  // preserve so UI can still show Seed badge
-      }))
+      ids: allIds,
+      embeddings: allEmbeddings,
+      documents: allDocuments,
+      metadatas: allMetadatas.map(m => ({ ...m, source_type: 'global' }))
     });
 
-    console.log(`✅ Seeded ${newIds.length} vectors into session ${sessionId}`);
+    console.log(`✅ Seeded ${allIds.length} vectors into session ${sessionId}`);
     seededSessions.add(sessionId);
 
-    // Register global docs in session document list for listing in UI
+    // Register global docs in session document list for UI
     const session = getSession(sessionId);
     if (session) {
       const docsMap = new Map();
-      allGlobal.metadatas.forEach(meta => {
+      allMetadatas.forEach(meta => {
         if (!docsMap.has(meta.document_id)) {
           docsMap.set(meta.document_id, {
             id: meta.document_id,
@@ -141,7 +146,6 @@ export async function initSessionWithGlobalDocs(sessionId) {
 
   } catch (error) {
     console.error(`❌ Failed to seed session ${sessionId}:`, error.message);
-    // Non-fatal — session can still work without global docs
   }
 }
 
@@ -164,8 +168,6 @@ export function addDocumentToSession(sessionId, documentInfo) {
 export function canAcceptUpload(sessionId) {
   const session = getSession(sessionId);
   if (!session) return { canUpload: false, reason: 'Session not found' };
-
-  // Count only session-uploaded docs (not global seeds)
   const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
   if (uploadedCount >= MAX_PDFS_PER_SESSION) {
     return { canUpload: false, reason: `Maximum ${MAX_PDFS_PER_SESSION} PDFs per session` };
@@ -221,7 +223,6 @@ export function getSessionDocuments(sessionId) {
 export async function getAllDocuments(sessionId) {
   const sessionDocs = getSessionDocuments(sessionId);
   return {
-    // Split for UI — global seeded docs vs user-uploaded docs
     sessionDocuments: sessionDocs.filter(d => d.sourceType === 'session_upload'),
     globalDocuments: sessionDocs.filter(d => d.sourceType === 'global')
   };
