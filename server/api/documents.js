@@ -236,7 +236,9 @@ export async function handleUpload(req, res) {
 export async function listDocumentsHandler(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
   try {
-    const documents = await getAllDocuments(sessionId);
+    // Ensure session object exists in memory (no-op if already created)
+    getOrCreateSession(sessionId);
+    const documents = getAllDocuments(sessionId);
     res.json(documents);
   } catch (error) {
     console.error('List documents error:', error);
@@ -277,7 +279,6 @@ export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
   try {
-    // Check session upload first
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
@@ -285,7 +286,6 @@ export async function getDocumentFile(req, res) {
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
-    // Fall back to seed documents
     if (filename) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
@@ -294,7 +294,6 @@ export async function getDocumentFile(req, res) {
         return fs.createReadStream(seedPath).pipe(res);
       }
 
-      // Fuzzy match by stem name
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
         const match = allPdfs.find(f => f.includes(path.parse(filename).name));
