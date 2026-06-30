@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Document, UploadState } from '../types';
 
 export function useDocuments(sessionId: string) {
@@ -6,6 +6,7 @@ export function useDocuments(sessionId: string) {
   const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
+  const initDoneRef = useRef(false);
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -28,8 +29,23 @@ export function useDocuments(sessionId: string) {
   }, [sessionId]);
 
   useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
+    let cancelled = false;
+
+    async function initThenFetch() {
+      // Only call session init once per sessionId mount
+      if (!initDoneRef.current) {
+        initDoneRef.current = true;
+        await fetch('/api/session/init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
+        }).catch(err => console.warn('Session init failed (non-fatal):', err.message));
+      }
+      if (!cancelled) await fetchDocuments();
+    }
+
+    initThenFetch();
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   const uploadDocument = useCallback(async (file: File) => {
     setUploadState({ status: 'uploading' });
