@@ -57,6 +57,15 @@ const upload = multer({
   }
 });
 
+// RFC 5987 — safe Content-Disposition for filenames with special chars, unicode, etc.
+function contentDisposition(displayName) {
+  const encoded = encodeURIComponent(displayName)
+    .replace(/'/g, '%27')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29');
+  return `inline; filename="document.pdf"; filename*=UTF-8''${encoded}`;
+}
+
 async function parsePDFWithBoundaryMap(filePath) {
   try {
     const buffer = fs.readFileSync(filePath);
@@ -282,7 +291,7 @@ export async function getDocumentFile(req, res) {
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${documentId}.pdf"`);
+      res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
@@ -291,7 +300,7 @@ export async function getDocumentFile(req, res) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        res.setHeader('Content-Disposition', contentDisposition(filename));
         return fs.createReadStream(seedPath).pipe(res);
       }
 
@@ -302,7 +311,7 @@ export async function getDocumentFile(req, res) {
         if (match) {
           const matchPath = path.join(seedDir, match);
           res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `inline; filename="${match}"`);
+          res.setHeader('Content-Disposition', contentDisposition(match));
           return fs.createReadStream(matchPath).pipe(res);
         }
       }
