@@ -169,7 +169,6 @@ export async function handleUpload(req, res) {
       }
     }));
 
-    // Destructure collection from getSessionCollection
     const { collection } = await getSessionCollection(sessionId);
 
     const embeddings = await generateEmbeddings(
@@ -251,7 +250,7 @@ export async function deleteDocument(req, res) {
 
   try {
     if (sessionId) {
-      const { collection } = await getSessionCollection(sessionId); // destructure
+      const { collection } = await getSessionCollection(sessionId);
       if (collection) {
         const count = await deleteDocumentVectors(collection, documentId);
         if (count > 0) {
@@ -264,7 +263,6 @@ export async function deleteDocument(req, res) {
     const tmpPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(tmpPath)) {
       fs.unlinkSync(tmpPath);
-      console.log(`🗑️  Deleted tmp file: ${tmpPath}`);
     }
 
     res.json({ success: true, documentId });
@@ -279,29 +277,24 @@ export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
   try {
+    // Check session upload first
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
-    console.log('PDF request — documentId:', documentId, '| filename param:', filename);
-console.log('Upload path exists:', fs.existsSync(uploadPath));
-console.log('Seed dir:', seedDir);
-console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
-    
     if (fs.existsSync(uploadPath)) {
-      const stat = fs.statSync(seedPath);
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Length', stat.size);
       res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
+    // Fall back to seed documents
     if (filename) {
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
-         const stat = fs.statSync(seedPath);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', contentDisposition(filename));
         return fs.createReadStream(seedPath).pipe(res);
       }
 
+      // Fuzzy match by stem name
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
         const match = allPdfs.find(f => f.includes(path.parse(filename).name));
