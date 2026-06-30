@@ -36,11 +36,12 @@ function calculateCoverage(results, topK = TOP_K) {
     return { confidence: 0, topScore: 0 };
   }
 
-  const scores = results.slice(0, topK).map(r => r.score);
+  // Clamp negative scores (possible with cosine distance > 1) to 0
+  const scores = results.slice(0, topK).map(r => Math.max(0, r.score));
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
 
   return {
-    confidence: Math.round(avgScore * 100), // 0.47 → 47
+    confidence: Math.round(avgScore * 100),
     topScore: Math.max(...scores)
   };
 }
@@ -88,6 +89,11 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
     allResults.sort((a, b) => b.score - a.score);
     const topResults = allResults.slice(0, topK);
     const coverage = calculateCoverage(topResults, topK);
+
+    // Debug log — remove once confirmed working
+    console.log('🔍 Query:', query);
+    console.log('📊 Coverage:', coverage);
+    console.log('📈 Raw scores:', topResults.map(r => r.score.toFixed(4)));
 
     return { results: topResults, coverage, queryEmbedding };
 
