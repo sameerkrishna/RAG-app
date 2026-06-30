@@ -146,12 +146,12 @@ CURRENT QUESTION: ${query}`;
 
     const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
-    // ✅ No renumbering — keep original indices to match answer text exactly
+    // No renumbering — keep original indices to match answer text exactly
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : matchedCitations;
 
-    // ✅ Match sources by chunkId — always aligned with finalCitations
+    // Match sources by chunkId — always aligned with finalCitations
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
