@@ -52,7 +52,7 @@ app.get('/ping', (req, res) => {
 // Called by frontend on chat screen mount — seeds global docs into session
 // before the user sends their first message, eliminating first-message latency
 // ===============================
-app.post('/api/session/init', async (req, res) => {
+app.post('/session/init', async (req, res) => {
   console.log('A')
   const sessionId = req.headers['x-session-id'];
 console.log('session id: '+ sessionId)
