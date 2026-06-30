@@ -234,24 +234,33 @@ export function getSessionDocuments(sessionId) {
 }
 
 /**
- * getAllDocuments: calls getSessionCollection which returns the already-cached
- * in-memory collection object (no Chroma Cloud call if session is initialised).
+ * getAllDocuments: reads directly from in-memory session.documents.
+ * No Chroma Cloud call — session.documents is populated once on init
+ * and kept in sync on upload/delete.
  * source_type 'global' is remapped to 'seed' for the frontend Document type.
  */
-export async function getAllDocuments(sessionId) {
-  try {
-    const { collection } = await getSessionCollection(sessionId);
-    const chromaDocs = await listDocuments(collection);
-    return {
-      sessionDocuments: chromaDocs.filter(d => d.source_type === 'session_upload'),
-      globalDocuments: chromaDocs
-        .filter(d => d.source_type === 'global' || d.source_type === 'seed')
-        .map(d => ({ ...d, source_type: 'seed' }))
-    };
-  } catch (err) {
-    console.error('getAllDocuments error:', err.message);
-    return { sessionDocuments: [], globalDocuments: [] };
-  }
+export function getAllDocuments(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return { sessionDocuments: [], globalDocuments: [] };
+
+  const normalize = (doc) => ({
+    document_id: doc.id,
+    filename: doc.filename,
+    chunk_count: doc.chunkCount ?? 0,
+    page_count: doc.pageCount ?? 0,
+    upload_timestamp: doc.uploadTimestamp || null,
+    source_type: doc.sourceType === 'session_upload' ? 'session_upload' : 'seed',
+    fileSize: doc.fileSize || null
+  });
+
+  return {
+    sessionDocuments: session.documents
+      .filter(d => d.sourceType === 'session_upload')
+      .map(normalize),
+    globalDocuments: session.documents
+      .filter(d => d.sourceType === 'global')
+      .map(normalize)
+  };
 }
 
 export function getSessionStats(sessionId) {
