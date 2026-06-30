@@ -7,10 +7,18 @@ import { getOrCreateSession } from '../services/sessionService.js';
 
 const router = Router();
 
-
 // Fix 4: Detect when LLM says it can't answer from context
 const OUT_OF_SCOPE_PATTERN = /don't have information|do not have information|not in my knowledge|can't find|cannot find|no information|knowledge base doesn't|not covered|outside.*knowledge/i;
 
+function cleanExcerpt(text) {
+  return text
+    .replace(/(?<!\w)([A-Za-z])\s([A-Za-z])\s([A-Za-z])(\s[A-Za-z])*/g, (match) =>
+      match.replace(/\s/g, '')
+    )
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\*\s*/, '')
+    .trim();
+}
 
 function expandQuery(query, sessionId) {
   const words = query.trim().split(/\s+/);
@@ -59,13 +67,12 @@ export async function handleChatStream(req, res) {
     res.write(`event: ${event}\n`);
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
-  
+
   addTurnWithCitations(sessionId, 'user', query.trim());
 
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    // NEW
     const expandedQuery = expandQuery(query, sessionId);
     const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
 
@@ -75,25 +82,24 @@ export async function handleChatStream(req, res) {
       topScore: coverage.topScore
     });
 
-    // Pre-build sources + citations — used in both refusal and normal paths
     const citations = generateCitations(results);
     const sources = results.map(r => ({
       chunkId: r.id,
       documentId: r.metadata.document_id,
       filename: r.metadata.filename,
       pageNumber: r.metadata.page_number,
-      excerpt: r.text.slice(0, 200),
+      excerpt: cleanExcerpt(r.text.slice(0, 200)),
       score: r.score,
       sourceType: r.source_type
     }));
 
     if (shouldShowRefusal(coverage)) {
-      const refusalText = getRefusalText();
+      const refusalText = getRefusalText ? getRefusalText() : "I don't have information on that topic in my knowledge base.";
       addTurnWithCitations(sessionId, 'assistant', refusalText, [], coverage, answerId);
       sendEvent('complete', {
         answerId,
         response: refusalText,
-        citations: [],       // no citations on hard refusal
+        citations: [],
         coverage,
         sources: [],
         action: 'refusal'
@@ -106,7 +112,7 @@ export async function handleChatStream(req, res) {
 
     const contextText = formatContextForPrompt(results);
 
-    const memoryContext = getRecentTurns(sessionId, 10)
+    const memoryContext = getRecentTurns(sessionId, 5)
       .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
       .join('\n\n');
 
@@ -122,7 +128,7 @@ ${memoryContext}
 CURRENT QUESTION: ${query}
 
 Rules:
-- Cite sources inline as [1], [2] only for context chunks you actually used
+- Cite sources inline as [1] [2] only for context chunks you actually used
 - Always cite as separate brackets [1] [2], never as [1, 2]
 - Never add citation numbers you did not use
 - For greetings or small talk, respond naturally and briefly — do NOT mention the knowledge base topic, do NOT reference any documents, do NOT add citations
@@ -134,8 +140,6 @@ Rules:
       if (chunk.type === 'token') {
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
-         // Add delay between tokens for natural feel
-    await new Promise(resolve => setTimeout(resolve, 20));
       } else if (chunk.type === 'error') {
         sendEvent('error', { message: chunk.error, code: 'LLM_ERROR' });
       } else if (chunk.type === 'complete') {
@@ -145,15 +149,17 @@ Rules:
 
     // Fix 3: Only keep citations whose index number appears in the response text
     const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
-  .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
-  .filter((v, i, a) => a.indexOf(v) === i);
+      .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
+      .filter((v, i, a) => a.indexOf(v) === i);
 
     // Fix 4: If LLM went off-context, strip all citations
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
 
     const finalCitations = (isOutOfScope || citedIndices.length === 0)
       ? []
-      : citations.filter(c => citedIndices.includes(c.index));
+      : citations
+          .filter(c => citedIndices.includes(c.index))
+          .map((c, i) => ({ ...c, index: i + 1 }));
 
     const finalSources = (isOutOfScope || citedIndices.length === 0)
       ? []
@@ -182,15 +188,13 @@ export async function getSources(req, res) {
   const { answerId } = req.params;
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
-  const recentTurns = getRecentTurns(sessionId, 10);
+  const recentTurns = getRecentTurns(sessionId, 20);
 
-  // Strict match by answerId first
   const exactMatch = recentTurns.find(t => t.id === answerId);
   if (exactMatch?.citations?.length > 0) {
     return res.json({ sources: exactMatch.citations });
   }
 
-  // Fallback: most recent assistant turn with citations
   const fallback = [...recentTurns].reverse().find(t =>
     t.role === 'assistant' && t.citations?.length > 0
   );

@@ -5,6 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
 import pdf from 'pdf-parse';
+import { fileURLToPath } from 'url';
 import { sanitizeFilename, validatePDFFile, validateFileSize } from '../utils/sanitize.js';
 import {
   CorruptedPDFError,
@@ -20,12 +21,16 @@ import { getOrCreateSession, canAcceptUpload, addDocumentToSession, removeDocume
 
 const router = Router();
 
-const uploadDir = '/tmp/uploads';
-const seedDir = process.cwd();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
+const uploadDir = '/tmp/uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
+
+// Seed PDFs are at repo root — two levels up from server/api/
+const seedDir = path.resolve(__dirname, '../../');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -44,7 +49,6 @@ const upload = multer({
   }
 });
 
-// Parse PDF with per-page boundary map for accurate page numbers
 async function parsePDFWithBoundaryMap(filePath) {
   try {
     const buffer = fs.readFileSync(filePath);
@@ -60,7 +64,6 @@ async function parsePDFWithBoundaryMap(filePath) {
       }
     });
 
-    // Fallback if pagerender yields nothing
     if (pages.length === 0 || pages.every(p => !p.trim())) {
       const full = await pdf(buffer);
       pages.push(full.text);
@@ -69,7 +72,6 @@ async function parsePDFWithBoundaryMap(filePath) {
     const totalPages = pages.length;
     const cleanedPages = pages.map(p => cleanText(p));
 
-    // Build page boundary map
     const pageMap = [];
     let charPos = 0;
     for (let i = 0; i < cleanedPages.length; i++) {
@@ -112,7 +114,6 @@ export async function handleUpload(req, res) {
       throw new DuplicateFileError(cleanFilename);
     }
 
-    // Parse with boundary map
     const { fullText, pageMap, totalPages } = await parsePDFWithBoundaryMap(file.path);
 
     if (!fullText || fullText.trim().length < 50) {
@@ -125,7 +126,6 @@ export async function handleUpload(req, res) {
 
     const documentId = path.parse(file.filename).name;
 
-    // Chunk full document at 1000 tokens / 200 overlap
     const rawChunks = chunkText(fullText, {
       chunkSizeTokens: 1000,
       overlapTokens: 200
@@ -133,13 +133,9 @@ export async function handleUpload(req, res) {
 
     if (rawChunks.length === 0) {
       fs.unlinkSync(file.path);
-      return res.status(422).json({
-        error: 'No content could be extracted from PDF',
-        code: 'EMPTY_PDF'
-      });
+      return res.status(422).json({ error: 'No content could be extracted from PDF', code: 'EMPTY_PDF' });
     }
 
-    // Build chunks with accurate page numbers from boundary map
     const chunks = rawChunks.map((chunk, idx) => ({
       text: chunk.text,
       metadata: {
@@ -160,13 +156,10 @@ export async function handleUpload(req, res) {
 
     const collection = await getSessionCollection(sessionId);
 
-    // Use same batching strategy as seed script
-    // (7 chunks per batchEmbedContents, 4 parallel calls, 61s wait between groups)
     const embeddings = await generateEmbeddings(
       chunks,
       'RETRIEVAL_DOCUMENT',
       ({ current_batch, total_batches }) => {
-        // Emit SSE progress if available
         if (req.app.locals.progressCallbacks) {
           req.app.locals.progressCallbacks.emit(`progress_${sessionId}`, {
             documentId,
@@ -180,10 +173,7 @@ export async function handleUpload(req, res) {
 
     if (embeddings.length === 0) {
       fs.unlinkSync(file.path);
-      return res.status(503).json({
-        error: 'Failed to generate embeddings',
-        code: 'EMBEDDING_FAILED'
-      });
+      return res.status(503).json({ error: 'Failed to generate embeddings', code: 'EMBEDDING_FAILED' });
     }
 
     await addVectors(
@@ -264,10 +254,10 @@ export async function deleteDocument(req, res) {
 
 export async function getDocumentFile(req, res) {
   const { documentId } = req.params;
- console.log('PDF requested for documentId:', documentId);
-  console.log('PDFs in root:', fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf')));
+  const filename = req.query.filename;
+
   try {
-    // Step 1: session upload — /tmp/uploads/<uuid>.pdf
+    // Step 1: session upload by UUID
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
@@ -275,20 +265,19 @@ export async function getDocumentFile(req, res) {
       return fs.createReadStream(uploadPath).pipe(res);
     }
 
-    // Step 2: seed doc — exact name match in project root
-    const exactSeedPath = path.join(seedDir, `${documentId}.pdf`);
-    if (fs.existsSync(exactSeedPath)) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${documentId}.pdf"`);
-      return fs.createReadStream(exactSeedPath).pipe(res);
+    // Step 2: seed doc — match by original filename from query param
+    if (filename) {
+      const seedPath = path.join(seedDir, filename);
+      if (fs.existsSync(seedPath)) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        return fs.createReadStream(seedPath).pipe(res);
+      }
     }
 
-    // Step 3: seed doc — fuzzy scan project root for PDF whose name contains documentId
+    // Step 3: scan all PDFs in seedDir as last resort
     const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
-    const match = allPdfs.find(f =>
-      path.parse(f).name === documentId || f.includes(documentId)
-    );
-
+    const match = allPdfs.find(f => filename && f.includes(path.parse(filename).name));
     if (match) {
       const matchPath = path.join(seedDir, match);
       res.setHeader('Content-Type', 'application/pdf');
@@ -297,7 +286,6 @@ export async function getDocumentFile(req, res) {
     }
 
     return res.status(404).json({ error: 'Document file not found', code: 'FILE_NOT_FOUND' });
-
   } catch (error) {
     console.error('Get document file error:', error);
     res.status(500).json({ error: 'Failed to retrieve document', code: 'RETRIEVE_ERROR' });

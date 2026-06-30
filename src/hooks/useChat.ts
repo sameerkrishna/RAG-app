@@ -57,22 +57,18 @@ export function useChat(sessionId: string) {
       let coverage: CoverageInfo | undefined;
       let sources: SearchResult[] = [];
       let buffer = '';
-      // ✅ FIX: Track current event name from the "event:" line
       let currentEventName = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // ✅ FIX: Buffer chunks — a chunk boundary may split an SSE line mid-way
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        // Keep the last (possibly incomplete) line in the buffer
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
           if (line.startsWith('event: ')) {
-            // ✅ FIX: Capture the event name instead of skipping it
             currentEventName = line.slice(7).trim();
             continue;
           }
@@ -82,30 +78,23 @@ export function useChat(sessionId: string) {
             try {
               const payload = JSON.parse(data);
 
-              // ✅ FIX: Use currentEventName (from "event:" line) to branch
               if (currentEventName === 'token' && payload.text) {
-                // Split chunk into words
-                const words = payload.text.split(/(\s+)/); // preserves spaces as tokens
-              
+                const words = payload.text.split(/(\s+)/);
                 let i = 0;
                 while (i < words.length) {
-                  // Pick random group size 1–10 words
                   const groupSize = Math.floor(Math.random() * 10) + 1;
                   const group = words.slice(i, i + groupSize).join('');
                   i += groupSize;
-              
                   accumulatedText += group;
                   setMessages(prev => prev.map(m =>
                     m.id === assistantMessageId
                       ? { ...m, content: accumulatedText }
                       : m
                   ));
-              
-                  // Random delay 20–90ms between groups
                   const delay = Math.floor(Math.random() * 71) + 20;
                   await new Promise(resolve => setTimeout(resolve, delay));
                 }
-              
+
               } else if (currentEventName === 'complete') {
                 citations = payload.citations || [];
                 coverage = payload.coverage;
@@ -135,18 +124,16 @@ export function useChat(sessionId: string) {
                 ));
 
               } else if (currentEventName === 'retrieval') {
-                 coverage = {
-    confidence: payload.confidence,
-    topScore: payload.topScore
-  };
-                
+                coverage = {
+                  confidence: payload.confidence,
+                  topScore: payload.topScore
+                };
               }
 
-              // Reset after consuming a data line
               currentEventName = '';
 
             } catch (e) {
-              // Ignore parse errors on malformed lines
+              // Ignore parse errors
             }
           }
         }

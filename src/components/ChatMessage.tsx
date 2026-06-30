@@ -77,12 +77,12 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
           </div>
         )}
 
-    {/* Coverage Badge — only show when answer actually used sources */}
-{!isUser && message.coverage && message.coverage.confidence > 0 && message.citations && message.citations.length > 0 && (
-  <span className="mt-2 text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">
-    {message.coverage.confidence}% confidence
-  </span>
-)}
+        {/* Coverage Badge — only show when answer actually used sources */}
+        {!isUser && message.coverage && message.coverage.confidence > 0 && message.citations && message.citations.length > 0 && (
+          <span className="mt-2 text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">
+            {message.coverage.confidence}% confidence
+          </span>
+        )}
 
         {/* Action buttons for assistant messages */}
         {!isUser && message.content && !message.isStreaming && (
