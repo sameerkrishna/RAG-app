@@ -43,6 +43,8 @@ export function useChat(sessionId: string) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
   const activeConvIdRef = useRef<string | null>(null);
+  // Guard: track which convId has already had memory restored to avoid duplicate replays
+  const restoredConvIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const persist = useCallback((msgs: ChatMessage[], convId: string) => {
@@ -67,7 +69,6 @@ export function useChat(sessionId: string) {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
-    // Use existing convId from ref, or generate a new one
     const convId = activeConvIdRef.current ?? crypto.randomUUID();
     activeConvIdRef.current = convId;
 
@@ -226,6 +227,7 @@ export function useChat(sessionId: string) {
 
   const clearMessages = useCallback(() => {
     activeConvIdRef.current = null;
+    restoredConvIdRef.current = null;
     setMessages([]);
     setError(null);
     setActiveConvId(null);
@@ -237,7 +239,10 @@ export function useChat(sessionId: string) {
     setActiveConvId(conv.id);
     setError(null);
 
-    // Issue 3 fix: replay conversation turns to server memory so follow-up questions work
+    // Guard: only restore memory once per convId — skip if already restored
+    if (restoredConvIdRef.current === conv.id) return;
+    restoredConvIdRef.current = conv.id;
+
     try {
       await fetch('/api/session/restore-memory', {
         method: 'POST',

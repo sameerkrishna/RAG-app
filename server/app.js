@@ -11,7 +11,7 @@ import chatRouter from './api/chat.js';
 import feedbackRouter from './api/feedback.js';
 import searchRouter from './api/search.js';
 import { getOrCreateSession, initSessionWithGlobalDocs } from './services/sessionService.js';
-import { addTurnWithCitations } from './services/memoryService.js';
+import { addTurnWithCitations, clearMemory } from './services/memoryService.js';
 
 const app = express();
 
@@ -71,7 +71,6 @@ app.post('/session/init', async (req, res) => {
 
 // ===============================
 // SESSION RESTORE MEMORY ROUTE
-// Issue 3 fix: replay stored messages into server-side memoryMap when loading old conversation
 // ===============================
 app.post('/session/restore-memory', (req, res) => {
   const { convId, messages } = req.body;
@@ -81,6 +80,9 @@ app.post('/session/restore-memory', (req, res) => {
   }
 
   try {
+    // Always wipe the convId memory first so replaying never doubles up turns
+    clearMemory(convId);
+
     for (const msg of messages) {
       if ((msg.role === 'user' || msg.role === 'assistant') && typeof msg.content === 'string') {
         addTurnWithCitations(convId, msg.role, msg.content);
