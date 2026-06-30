@@ -61,7 +61,6 @@ export function deleteSession(sessionId) {
  * On session start:
  * - If collection is NEW → seed from global (paginated, 300/batch)
  * - If collection EXISTS → skip seed, reconstruct in-memory doc list from Chroma
- *   so UI correctly reflects what’s actually in the collection (respects prior deletes/adds)
  */
 export async function initSessionWithGlobalDocs(sessionId) {
   console.log(`🔑 Session init: ${sessionId}`);
@@ -72,7 +71,6 @@ export async function initSessionWithGlobalDocs(sessionId) {
     const { collection: sessionCollection, isNew } = await getSessionCollection(sessionId);
 
     if (!isNew) {
-      // Collection already exists on Chroma — reconstruct doc list from actual Chroma state
       console.log(`♻️  Session exists, reconstructing document list from Chroma...`);
       const session = getSession(sessionId);
       if (session && session.documents.length === 0) {
@@ -96,7 +94,6 @@ export async function initSessionWithGlobalDocs(sessionId) {
 
     console.log(`🌱 New session — seeding from global collection...`);
 
-    // Paginate global fetch — Chroma Cloud hard cap is 300/call
     const BATCH_SIZE = 300;
     let offset = 0;
     const allIds = [], allEmbeddings = [], allDocuments = [], allMetadatas = [];
@@ -122,7 +119,6 @@ export async function initSessionWithGlobalDocs(sessionId) {
       return;
     }
 
-    // Add in batches of 300 — Chroma Cloud caps add() at 300 records/call
     for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
       await sessionCollection.add({
         ids: allIds.slice(i, i + BATCH_SIZE),
@@ -136,7 +132,6 @@ export async function initSessionWithGlobalDocs(sessionId) {
     console.log(`✅ Seeded ${allIds.length} vectors into session ${sessionId}`);
     seededSessions.add(sessionId);
 
-    // Register global docs in session document list for UI
     const session = getSession(sessionId);
     if (session) {
       const docsMap = new Map();
@@ -238,12 +233,25 @@ export function getSessionDocuments(sessionId) {
   return session.documents;
 }
 
+/**
+ * getAllDocuments: calls getSessionCollection which returns the already-cached
+ * in-memory collection object (no Chroma Cloud call if session is initialised).
+ * source_type 'global' is remapped to 'seed' for the frontend Document type.
+ */
 export async function getAllDocuments(sessionId) {
-  const sessionDocs = getSessionDocuments(sessionId);
-  return {
-    sessionDocuments: sessionDocs.filter(d => d.sourceType === 'session_upload'),
-    globalDocuments: sessionDocs.filter(d => d.sourceType === 'global')
-  };
+  try {
+    const { collection } = await getSessionCollection(sessionId);
+    const chromaDocs = await listDocuments(collection);
+    return {
+      sessionDocuments: chromaDocs.filter(d => d.source_type === 'session_upload'),
+      globalDocuments: chromaDocs
+        .filter(d => d.source_type === 'global' || d.source_type === 'seed')
+        .map(d => ({ ...d, source_type: 'seed' }))
+    };
+  } catch (err) {
+    console.error('getAllDocuments error:', err.message);
+    return { sessionDocuments: [], globalDocuments: [] };
+  }
 }
 
 export function getSessionStats(sessionId) {
