@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { useChat, getAllConversations, deleteConversation } from '../hooks/useChat';
+import { Link, useNavigate } from 'react-router-dom';
+import { useChat, getAllConversations, deleteConversation, markNavigationToKB } from '../hooks/useChat';
 import type { StoredConversation } from '../hooks/useChat';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
@@ -23,6 +23,7 @@ function getGreeting(): string {
 }
 
 export default function Assistant({ sessionId }: AssistantProps) {
+  const navigate = useNavigate();
   const { messages, isLoading, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
@@ -37,16 +38,15 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
 
-  // On mount: if no saved conv in sessionStorage, this is a true app load — start fresh
+  // On mount: if messages already loaded from initial state (navigation back), restore memory.
+  // Otherwise start fresh (hard reload or new tab).
   useEffect(() => {
-    const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);
-    if (!savedConvId) {
+    if (activeConvId) {
+      const conv = getAllConversations().find(c => c.id === activeConvId);
+      if (conv) loadConversation(conv);
+    } else {
       clearMessages();
-      return;
     }
-    // Saved conv exists — restore memory on server for context
-    const conv = getAllConversations().find(c => c.id === savedConvId);
-    if (conv) loadConversation(conv);
   }, []);
 
   // Persist activeConvId to sessionStorage whenever it changes
@@ -76,7 +76,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   const isFirstMessage = messages.length === 0;
 
-  // Derive current conversation title for the top bar
   const activeConvTitle = activeConvId
     ? (conversations.find(c => c.id === activeConvId)?.title ?? 'New Conversation')
     : 'New Conversation';
@@ -93,6 +92,11 @@ export default function Assistant({ sessionId }: AssistantProps) {
     sessionStorage.removeItem(ACTIVE_CONV_KEY);
     setSourceDrawerOpen(false);
     setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleNavigateToKB = () => {
+    markNavigationToKB(); // set in-memory flag before leaving
+    navigate('/knowledge');
   };
 
   const handleLoadConversation = (conv: StoredConversation) => {
@@ -190,8 +194,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
             {!sidebarCollapsed && <span>New Conversation</span>}
           </button>
 
-          <Link
-            to="/knowledge"
+          <button
+            onClick={handleNavigateToKB}
             className={cn(
               'flex w-full items-center rounded-lg px-2 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground gap-2.5',
               sidebarCollapsed && 'justify-center px-0'
@@ -200,7 +204,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
           >
             <BookOpen className="h-4 w-4 flex-shrink-0" />
             {!sidebarCollapsed && <span>Knowledge Base</span>}
-          </Link>
+          </button>
 
           {/* Recents — only when expanded */}
           {!sidebarCollapsed && conversations.length > 0 && (

@@ -5,6 +5,15 @@ import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types
 const STORAGE_KEY = 'rag_conversations';
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
+// Module-level flag — lives in JS memory only.
+// true  = user navigated to KB and came back (SPA nav, module scope survives)
+// false = hard reload or new tab (module re-executes, flag resets to false)
+let _isNavigationBack = false;
+
+export function markNavigationToKB() {
+  _isNavigationBack = true;
+}
+
 export interface StoredConversation {
   id: string;
   title: string;
@@ -37,6 +46,12 @@ export function deleteConversation(id: string) {
 }
 
 function getInitialConversationState(): { messages: ChatMessage[]; activeConvId: string | null } {
+  // Only restore if this is a back-navigation from KB, not a hard reload
+  if (!_isNavigationBack) {
+    return { messages: [], activeConvId: null };
+  }
+  _isNavigationBack = false; // consume the flag
+
   try {
     const savedConvId = sessionStorage.getItem(ACTIVE_CONV_KEY);
     if (savedConvId) {
@@ -57,7 +72,6 @@ export function useChat(sessionId: string) {
   const [activeConvId, setActiveConvId] = useState<string | null>(initialState.activeConvId);
 
   const activeConvIdRef = useRef<string | null>(initialState.activeConvId);
-  // Guard: track which convId has already had memory restored to avoid duplicate replays
   const restoredConvIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -93,7 +107,6 @@ export function useChat(sessionId: string) {
       timestamp: new Date()
     };
 
-    // Issue 1 fix: persist user message immediately so sidebar title appears at once
     setMessages(prev => {
       const next = [...prev, userMessage];
       persist(next, convId);
@@ -253,7 +266,6 @@ export function useChat(sessionId: string) {
     setActiveConvId(conv.id);
     setError(null);
 
-    // Guard: only restore memory once per convId — skip if already restored
     if (restoredConvIdRef.current === conv.id) return;
     restoredConvIdRef.current = conv.id;
 
