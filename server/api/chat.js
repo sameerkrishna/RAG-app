@@ -19,39 +19,30 @@ function cleanExcerpt(text) {
     .trim();
 }
 
-function expandQuery(query, sessionId) {
+// Issue 4 fix: remove domainHint — short queries no longer inherit previous conversation context
+function expandQuery(query) {
   const words = query.trim().split(/\s+/);
   if (words.length > 4) return query;
-
-  const recentTurns = getRecentTurns(sessionId, 4);
-  const recentContext = recentTurns
-    .filter(t => t.role === 'user')
-    .map(t => t.content)
-    .join(' ');
 
   const expansions = [
     'definition', 'overview', 'role', 'responsibilities',
     'examples', 'key concepts', 'how it works', 'purpose'
   ];
 
-  const queryWords = query.toLowerCase().split(/\s+/);
-  const contextRelevant = queryWords.some(w =>
-    w.length > 3 && recentContext.toLowerCase().includes(w)
-  );
-
-  const domainHint = contextRelevant ? `${recentContext.slice(0, 80)}: ` : '';
-
-  return `${domainHint}${query} ${expansions.join(' ')}`;
+  return `${query} ${expansions.join(' ')}`;
 }
 
 export async function handleChatStream(req, res) {
-  const { query, sessionId: providedSessionId } = req.body;
+  // Issue 5 fix: extract convId from body — use as memory key instead of sessionId
+  const { query, sessionId: providedSessionId, convId: providedConvId } = req.body;
 
   if (!query || typeof query !== 'string' || query.trim().length === 0) {
     return res.status(400).json({ error: 'Query is required', code: 'MISSING_QUERY' });
   }
 
   const sessionId = providedSessionId || uuidv4();
+  // Issue 5 fix: each conversation gets its own memory slot
+  const convId = providedConvId || uuidv4();
   const answerId = uuidv4();
 
   getOrCreateSession(sessionId);
@@ -67,12 +58,13 @@ export async function handleChatStream(req, res) {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  addTurnWithCitations(sessionId, 'user', query.trim());
+  // Issue 5 fix: use convId for memory, not sessionId
+  addTurnWithCitations(convId, 'user', query.trim());
 
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    const expandedQuery = expandQuery(query, sessionId);
+    const expandedQuery = expandQuery(query);
     const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
 
     sendEvent('retrieval', {
@@ -97,9 +89,15 @@ export async function handleChatStream(req, res) {
 
     const contextText = formatContextForPrompt(results);
 
-    const memoryContext = getRecentTurns(sessionId, 5)
-      .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
-      .join('\n\n');
+    // Issues 3 & 6 fix: use convId for memory; structured Q&A format via formatMemoryForPrompt
+    const recentTurns = getRecentTurns(convId, 10);
+    const questions = recentTurns.filter(t => t.role === 'user');
+    const answers   = recentTurns.filter(t => t.role === 'assistant');
+    const qSection  = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
+    const aSection  = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
+    const memoryContext = recentTurns.length > 0
+      ? `Previous Questions:\n${qSection}\n\nPrevious Answers:\n${aSection}`
+      : '';
 
     const prompt = `You are an AI Knowledge Assistant. Your behaviour depends on the type of input:
 
@@ -121,7 +119,7 @@ CONTEXT:
 ${contextText || '(No relevant documents found in knowledge base)'}
 
 CONVERSATION HISTORY:
-${memoryContext}
+${memoryContext || '(No previous conversation)'}
 
 CURRENT QUESTION: ${query}`;
 
@@ -153,19 +151,16 @@ CURRENT QUESTION: ${query}`;
 
     const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
-    // Remap old LLM indices → new sequential indices by first appearance
     const indexMap = new Map();
     citedIndices.forEach((oldIdx, i) => {
       indexMap.set(oldIdx, i + 1);
     });
 
-    // Rewrite response text so [3][2][1] becomes [1][2][3]
     const rewrittenResponse = fullResponse.replace(/\[(\d+)\]/g, (match, num) => {
       const newIdx = indexMap.get(parseInt(num));
       return newIdx !== undefined ? `[${newIdx}]` : match;
     });
 
-    // Remap citations with new indices, sorted by first appearance
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : matchedCitations
@@ -173,7 +168,6 @@ CURRENT QUESTION: ${query}`;
           .filter(c => c.index !== undefined)
           .sort((a, b) => a.index - b.index);
 
-    // Match sources by chunkId, sorted in same order as finalCitations
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
@@ -186,7 +180,8 @@ CURRENT QUESTION: ${query}`;
             return idxA - idxB;
           });
 
-    addTurnWithCitations(sessionId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
+    // Issue 5 fix: store assistant turn under convId
+    addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
     sendEvent('complete', {
       answerId,

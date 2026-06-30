@@ -39,10 +39,33 @@ export function deleteConversation(id: string) {
 
 // ── hook ──────────────────────────────────────────────────────────────────
 export function useChat(sessionId: string) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Issue 2 fix: restore last conversation on mount so KB nav doesn't lose state
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const recent = getAllConversations()[0];
+    return recent ? recent.messages : [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+
+  // Issue 2 fix: restore activeConvId on mount
+  const [activeConvId, setActiveConvId] = useState<string | null>(() => {
+    const recent = getAllConversations()[0];
+    return recent ? recent.id : null;
+  });
+
+  // Issue 1 fix: use a ref so convId is synchronously available inside sendMessage
+  // even before setActiveConvId re-renders
+  const activeConvIdRef = useRef<string | null>(() => {
+    const recent = getAllConversations()[0];
+    return recent ? recent.id : null;
+  } as unknown as string | null);
+
+  // Initialise ref in sync with state
+  if (activeConvIdRef.current === undefined as unknown as null) {
+    const recent = getAllConversations()[0];
+    activeConvIdRef.current = recent ? recent.id : null;
+  }
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Persist current messages to localStorage under activeConvId
@@ -68,8 +91,9 @@ export function useChat(sessionId: string) {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
-    // Ensure we have a conversation ID — create one on first message
-    const convId = activeConvId ?? crypto.randomUUID();
+    // Issue 1 fix: use ref for synchronous access — no stale closure on first message
+    const convId = activeConvIdRef.current ?? crypto.randomUUID();
+    activeConvIdRef.current = convId;
     if (!activeConvId) setActiveConvId(convId);
 
     setMessages(prev => [...prev, {
@@ -101,7 +125,8 @@ export function useChat(sessionId: string) {
           'Content-Type': 'application/json',
           'x-session-id': sessionId
         },
-        body: JSON.stringify({ query, sessionId }),
+        // Issue 5 fix: send convId so server uses it as memory key
+        body: JSON.stringify({ query, sessionId, convId }),
         signal: abortControllerRef.current.signal
       });
 
@@ -163,7 +188,6 @@ export function useChat(sessionId: string) {
                       ? { ...m, content: payload.response || accumulatedText, citations, coverage, sources, isRefusal, isStreaming: false }
                       : m
                   );
-                  // Persist full message list including citations/sources after complete
                   persist(next, convId);
                   return next;
                 });
@@ -219,13 +243,19 @@ export function useChat(sessionId: string) {
   }, []);
 
   const clearMessages = useCallback(() => {
+    // Issue 5 fix: generate fresh convId so new conversation gets isolated server memory
+    const newConvId = crypto.randomUUID();
+    activeConvIdRef.current = newConvId;
     setMessages([]);
     setError(null);
-    setActiveConvId(null);
+    setActiveConvId(null); // null = no active conv yet, will be set on first message
+    activeConvIdRef.current = null;
   }, []);
 
   // Restore a past conversation
   const loadConversation = useCallback((conv: StoredConversation) => {
+    // Issue 5 fix: update ref so next message uses correct convId
+    activeConvIdRef.current = conv.id;
     setMessages(conv.messages);
     setActiveConvId(conv.id);
     setError(null);
