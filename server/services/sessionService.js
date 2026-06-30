@@ -58,21 +58,43 @@ export function deleteSession(sessionId) {
 }
 
 /**
- * On session start: seed the session collection from global.
- * - getSessionCollection() handles getCollection vs createCollection:
- *     new UUID  → collection not found on Chroma → createCollection → needs seeding
- *     server restart, same tab → collection found → reuse → skip seeding (count check)
- * - Both get and add are batched at 300 to respect Chroma Cloud free tier quotas.
+ * On session start:
+ * - If collection is NEW → seed from global (paginated, 300/batch)
+ * - If collection EXISTS → skip seed, reconstruct in-memory doc list from Chroma
+ *   so UI correctly reflects what’s actually in the collection (respects prior deletes/adds)
  */
 export async function initSessionWithGlobalDocs(sessionId) {
-  console.log("In the init sessionwith gobaldocs function");
+  console.log(`🔑 Session init: ${sessionId}`);
   if (seededSessions.has(sessionId)) return;
 
   try {
-    console.log(`🌱 Seeding session ${sessionId} from global collection...`);
-
     const globalCollection = await getGlobalCollection();
-    const sessionCollection = await getSessionCollection(sessionId);
+    const { collection: sessionCollection, isNew } = await getSessionCollection(sessionId);
+
+    if (!isNew) {
+      // Collection already exists on Chroma — reconstruct doc list from actual Chroma state
+      console.log(`♻️  Session exists, reconstructing document list from Chroma...`);
+      const session = getSession(sessionId);
+      if (session && session.documents.length === 0) {
+        const docs = await listDocuments(sessionCollection);
+        docs.forEach(doc => {
+          session.documents.push({
+            id: doc.document_id,
+            filename: doc.filename,
+            fileSize: null,
+            pageCount: doc.page_count || null,
+            chunkCount: doc.chunk_count,
+            sourceType: doc.source_type,
+            uploadTimestamp: doc.upload_timestamp
+          });
+        });
+        console.log(`✅ Reconstructed ${docs.length} document(s) for session ${sessionId}`);
+      }
+      seededSessions.add(sessionId);
+      return;
+    }
+
+    console.log(`🌱 New session — seeding from global collection...`);
 
     // Paginate global fetch — Chroma Cloud hard cap is 300/call
     const BATCH_SIZE = 300;
@@ -100,15 +122,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
       return;
     }
 
-    // Skip if session collection already fully seeded (server restart, same tab)
-    const existingCount = await sessionCollection.count();
-    if (existingCount >= allIds.length) {
-      console.log(`✅ Session ${sessionId} already fully seeded (${existingCount} vectors). Skipping.`);
-      seededSessions.add(sessionId);
-      return;
-    }
-
-    // Add in batches of 300 — Chroma Cloud also caps add() at 300 records/call
+    // Add in batches of 300 — Chroma Cloud caps add() at 300 records/call
     for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
       await sessionCollection.add({
         ids: allIds.slice(i, i + BATCH_SIZE),

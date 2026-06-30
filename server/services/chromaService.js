@@ -56,29 +56,29 @@ export async function getGlobalCollection() {
 }
 
 /**
- * Gets or creates a session collection.
- * - If it already exists on Chroma Cloud (e.g. server restart, same browser tab): reuses it.
- * - If it doesn't exist (new session UUID on fresh app load): creates it fresh.
- * Seeding logic in sessionService decides whether to populate it.
+ * Returns { collection, isNew }.
+ * isNew = true  → freshly created, needs seeding from global.
+ * isNew = false → already existed on Chroma Cloud, respect its current state (user may have added/deleted PDFs).
  */
 export async function getSessionCollection(sessionId) {
   if (sessionCollections.has(sessionId)) {
-    return sessionCollections.get(sessionId);
+    return { collection: sessionCollections.get(sessionId), isNew: false };
   }
 
   const client = getCloudClient();
   const collectionName = `session_${sessionId}`;
 
   let collection;
+  let isNew;
+
   try {
-    // Try to get existing collection first (server restart case)
     collection = await client.getCollection({
       name: collectionName,
       embeddingFunction: null
     });
+    isNew = false;
     console.log(`♻️  Session collection exists, reusing: ${collectionName}`);
   } catch {
-    // Doesn't exist — create fresh (normal new session case)
     collection = await client.createCollection({
       name: collectionName,
       metadata: {
@@ -88,11 +88,12 @@ export async function getSessionCollection(sessionId) {
       },
       embeddingFunction: null
     });
+    isNew = true;
     console.log(`✅ Session collection created: ${collectionName}`);
   }
 
   sessionCollections.set(sessionId, collection);
-  return collection;
+  return { collection, isNew };
 }
 
 export async function deleteSessionCollection(sessionId) {
