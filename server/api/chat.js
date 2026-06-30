@@ -152,21 +152,26 @@ Rules:
       }
     }
 
+    // Extract citation indices actually used in the response
     const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
       .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
       .filter((v, i, a) => a.indexOf(v) === i);
 
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
 
-    const finalCitations = (isOutOfScope || citedIndices.length === 0)
-      ? []
-      : citations
-          .filter(c => citedIndices.includes(c.index))
-          .map((c, i) => ({ ...c, index: i + 1 }));
+    // Filter citations by cited indices, then re-number sequentially
+    const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
-    const finalSources = (isOutOfScope || citedIndices.length === 0)
+    const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
-      : sources.filter((_, i) => citedIndices.includes(i + 1));
+      : matchedCitations.map((c, i) => ({ ...c, index: i + 1 }));
+
+    // Match sources by chunkId — always aligned with finalCitations
+    const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
+
+    const finalSources = (isOutOfScope || matchedCitations.length === 0)
+      ? []
+      : sources.filter(s => matchedChunkIds.has(s.chunkId));
 
     addTurnWithCitations(sessionId, 'assistant', fullResponse, finalCitations, coverage, answerId);
 
