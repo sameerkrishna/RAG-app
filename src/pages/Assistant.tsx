@@ -30,18 +30,24 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   // Fire session init as soon as chat screen mounts
   // Stores the promise so sendMessage can await it if needed
-  useEffect(() => {
-    sessionInitRef.current = fetch('/api/session/init', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-session-id': sessionId
-      }
-    }).catch(err => {
-      // Non-fatal — chat.js will fall back to seeding on first message
-      console.warn('Session pre-init failed:', err.message);
-    });
-  }, [sessionId]);
+ const initFiredRef = useRef<boolean>(false);
+
+// Fire session init as soon as chat screen mounts
+// initFiredRef guard prevents React StrictMode double-firing in dev
+useEffect(() => {
+  if (initFiredRef.current) return;
+  initFiredRef.current = true;
+
+  sessionInitRef.current = fetch('/api/session/init', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-session-id': sessionId
+    }
+  }).catch(err => {
+    console.warn('Session pre-init failed:', err.message);
+  });
+}, [sessionId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
