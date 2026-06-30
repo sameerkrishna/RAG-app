@@ -35,6 +35,11 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const sessionInitRef = useRef<Promise<any> | null>(null);
   const initFiredRef = useRef<boolean>(false);
 
+  // Start with a fresh conversation on every app load
+  useEffect(() => {
+    clearMessages();
+  }, []);
+
   // Refresh sidebar list whenever activeConvId or message count changes
   useEffect(() => {
     setConversations(getAllConversations());
@@ -54,6 +59,11 @@ export default function Assistant({ sessionId }: AssistantProps) {
   }, [sessionId]);
 
   const isFirstMessage = messages.length === 0;
+
+  // Derive current conversation title for the top bar
+  const activeConvTitle = activeConvId
+    ? (conversations.find(c => c.id === activeConvId)?.title ?? 'New Conversation')
+    : 'New Conversation';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +120,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
     return '';
   };
 
-  const userInitials = 'S';
-  const userName = 'Sai';
+  const userInitials = 'U';
+  const userName = 'You';
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -231,7 +241,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
           {isFirstMessage ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4">
               <h1 className="text-3xl font-semibold mb-8 tracking-tight">
-                {getGreeting()}, {userName}
+                {getGreeting()} 👋
               </h1>
               <form onSubmit={handleSubmit} className="w-full max-w-2xl">
                 <div className="relative flex items-center gap-2 rounded-2xl border bg-background shadow-md px-4 py-3">
@@ -255,8 +265,13 @@ export default function Assistant({ sessionId }: AssistantProps) {
             </div>
           ) : (
             <>
-              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-6 pb-28 pt-6">
-                <div className="mx-auto max-w-3xl space-y-6">
+              {/* Top bar with conversation title */}
+              <header className="flex h-14 flex-shrink-0 items-center border-b bg-background px-4">
+                <span className="text-sm font-semibold truncate">{activeConvTitle}</span>
+              </header>
+
+              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-2 pb-28 pt-6">
+                <div className="mx-auto max-w-5xl space-y-6">
                   {messages.map(msg => (
                     <ChatMessage
                       key={msg.id}
@@ -282,7 +297,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
               </div>
 
               <div className="flex flex-shrink-0 flex-col border-t bg-background">
-                <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-3xl items-end gap-2 px-6 py-4">
+                <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-5xl items-end gap-2 px-2 py-4">
                   <div className="relative flex-1">
                     <input
                       ref={inputRef}
