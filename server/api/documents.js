@@ -280,6 +280,10 @@ export async function getDocumentFile(req, res) {
 
   try {
     const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
+    console.log('PDF request — documentId:', documentId, '| filename param:', filename);
+console.log('Upload path exists:', fs.existsSync(uploadPath));
+console.log('Seed dir:', seedDir);
+console.log('Seed path exists:', fs.existsSync(path.join(seedDir, filename)));
     if (fs.existsSync(uploadPath)) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
