@@ -64,6 +64,7 @@ export function deleteSession(sessionId) {
  * This only runs ONCE per sessionId — skipped on subsequent calls.
  */
 export async function initSessionWithGlobalDocs(sessionId) {
+  console.log("In the init sessionwith gobaldocs function")
   if (seededSessions.has(sessionId)) return; // already done
 
   try {
