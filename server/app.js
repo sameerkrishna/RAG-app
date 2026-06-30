@@ -64,6 +64,7 @@ app.post('/api/session/init', async (req, res) => {
   // Fire and don't block — client doesn't need to wait for full seeding
   // But we do await so the client knows when it's ready
   try {
+    console.log('calling initsession now')
     await initSessionWithGlobalDocs(sessionId);
     res.json({ ready: true, sessionId });
   } catch (err) {
