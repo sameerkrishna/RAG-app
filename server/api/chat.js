@@ -7,8 +7,10 @@ import { getOrCreateSession } from '../services/sessionService.js';
 
 const router = Router();
 
-// Fix 4: Detect when LLM says it can't answer from context
 const OUT_OF_SCOPE_PATTERN = /don't have information|do not have information|not in my knowledge|can't find|cannot find|no information|knowledge base doesn't|not covered|outside.*knowledge/i;
+
+// Greetings and small talk — skip refusal gate, let LLM handle naturally
+const GREETING_PATTERN = /^(hi+|he+y|hello+|howdy|sup|yo|thanks|thank you|bye|good morning|good evening|good afternoon|how are you|what's up|whats up)[\s!?.,'-]*$/i;
 
 function cleanExcerpt(text) {
   return text
@@ -73,12 +75,14 @@ export async function handleChatStream(req, res) {
   try {
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
-    const expandedQuery = expandQuery(query, sessionId);
+    const isGreeting = GREETING_PATTERN.test(query.trim());
+    const expandedQuery = isGreeting ? query : expandQuery(query, sessionId);
     const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
 
     sendEvent('retrieval', {
       results: results.length,
-      confidence: coverage.confidence,
+      level: coverage.level,
+      score: coverage.score,
       topScore: coverage.topScore
     });
 
@@ -93,7 +97,8 @@ export async function handleChatStream(req, res) {
       sourceType: r.source_type
     }));
 
-    if (shouldShowRefusal(coverage)) {
+    // Greetings skip refusal gate — LLM handles them naturally
+    if (!isGreeting && shouldShowRefusal(coverage)) {
       const refusalText = getRefusalText ? getRefusalText() : "I don't have information on that topic in my knowledge base.";
       addTurnWithCitations(sessionId, 'assistant', refusalText, [], coverage, answerId);
       sendEvent('complete', {
@@ -147,12 +152,10 @@ Rules:
       }
     }
 
-    // Fix 3: Only keep citations whose index number appears in the response text
     const citedIndices = [...fullResponse.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)]
       .flatMap(m => m[1].split(',').map(n => parseInt(n.trim())))
       .filter((v, i, a) => a.indexOf(v) === i);
 
-    // Fix 4: If LLM went off-context, strip all citations
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
 
     const finalCitations = (isOutOfScope || citedIndices.length === 0)
