@@ -20,93 +20,76 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Build a map: chunkId → citation index
   const citationIndexMap = new Map<string, number>();
   citations.forEach(c => {
     if (c.chunkId) citationIndexMap.set(c.chunkId, c.index);
   });
 
+  // Inline panel — no overlay, parent controls mounting via conditional render
   return (
-    <div className={cn(
-      'source-drawer',
-      isOpen ? 'z-50 open' : 'closed'
-    )}>
-      <div className="h-full flex flex-col">
-        <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="font-semibold">Sources</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="w-4 h-4" />
-          </Button>
-        </div>
+    <div className="flex flex-col w-[320px] flex-shrink-0 border-l bg-background overflow-hidden">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h2 className="font-semibold text-sm">Sources</h2>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {sources.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <p>No sources available</p>
-            </div>
-          ) : (
-            sources.map((source, index) => {
-              const citationNum = citationIndexMap.get(source.chunkId);
-              // Build PDF URL — append #page=N so browser opens at the exact page
-              const pageFragment = source.pageNumber ? `#page=${source.pageNumber}` : '';
-              const pdfUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}${pageFragment}`;
-              return (
-                <div
-                  key={source.chunkId || index}
-                  className="border rounded-lg p-4 space-y-2"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      {/* Citation number badge */}
-                      {citationNum !== undefined && (
-                        <span className="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">
-                          {citationNum}
-                        </span>
-                      )}
-                      <div>
-                        <h3 className="font-medium text-sm">{source.filename}</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Page {source.pageNumber || 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={cn(
-                      'text-xs px-2 py-0.5 rounded',
-                      source.sourceType === 'global' ? 'bg-primary/10 text-primary' : 'bg-secondary'
-                    )}>
-                      {source.sourceType === 'global' ? 'Seed' : 'Session'}
-                    </span>
-                  </div>
-
-                  {source.excerpt && (
-                    <blockquote className="border-l-2 border-muted pl-3 text-xs text-muted-foreground italic line-clamp-3">
-                      "{source.excerpt}"
-                    </blockquote>
-                  )}
-
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {sources.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>No sources available</p>
+          </div>
+        ) : (
+          sources.map((source, index) => {
+            const citationNum = citationIndexMap.get(source.chunkId);
+            const pageFragment = source.pageNumber ? `#page=${source.pageNumber}` : '';
+            const pdfUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}${pageFragment}`;
+            return (
+              <div
+                key={source.chunkId || index}
+                className="border rounded-lg p-4 space-y-2"
+              >
+                <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleCopy(source.excerpt, source.chunkId)}
-                    >
-                      <Copy className="w-3 h-3 mr-1" />
-                      {copiedId === source.chunkId ? 'Copied!' : 'Copy'}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => window.open(pdfUrl, '_blank')}
-                    >
-                      <ExternalLink className="w-3 h-3 mr-1" />
-                      View PDF
-                    </Button>
+                    {citationNum !== undefined && (
+                      <span className="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">
+                        {citationNum}
+                      </span>
+                    )}
+                    <div>
+                      <h3 className="font-medium text-sm leading-tight">{source.filename}</h3>
+                      <p className="text-xs text-muted-foreground">Page {source.pageNumber || 'N/A'}</p>
+                    </div>
                   </div>
+                  <span className={cn(
+                    'text-xs px-2 py-0.5 rounded flex-shrink-0',
+                    source.sourceType === 'global' ? 'bg-primary/10 text-primary' : 'bg-secondary'
+                  )}>
+                    {source.sourceType === 'global' ? 'Seed' : 'Session'}
+                  </span>
                 </div>
-              );
-            })
-          )}
-        </div>
+
+                {source.excerpt && (
+                  <blockquote className="border-l-2 border-muted pl-3 text-xs text-muted-foreground italic line-clamp-3">
+                    "{source.excerpt}"
+                  </blockquote>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => handleCopy(source.excerpt, source.chunkId)}>
+                    <Copy className="w-3 h-3 mr-1" />
+                    {copiedId === source.chunkId ? 'Copied!' : 'Copy'}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => window.open(pdfUrl, '_blank')}>
+                    <ExternalLink className="w-3 h-3 mr-1" />
+                    View PDF
+                  </Button>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
