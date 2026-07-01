@@ -23,8 +23,18 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
   };
 
   const handleFeedback = async (type: 'positive' | 'negative') => {
-    if (feedbackSent) return;
+    if (feedbackSent || !message.answerKey) return;
     setFeedbackSent(type);
+
+    try {
+      await fetch(`/api/feedback/${message.answerKey}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedback: type === 'positive' ? 'liked' : 'disliked' })
+      });
+    } catch (err) {
+      console.error('[feedback] PATCH failed:', err);
+    }
   };
 
   const isUser = message.role === 'user';

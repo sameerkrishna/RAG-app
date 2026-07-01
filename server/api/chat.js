@@ -4,6 +4,7 @@ import { retrieveForQuery, generateCitations, formatContextForPrompt } from '../
 import { streamResponse } from '../services/geminiService.js';
 import { addTurnWithCitations, getRecentTurns } from '../services/memoryService.js';
 import { getOrCreateSession, getDeletedDocumentIds } from '../services/sessionService.js';
+import { logAnswer } from '../services/supabaseService.js';
 
 const router = Router();
 
@@ -19,7 +20,6 @@ function cleanExcerpt(text) {
     .trim();
 }
 
-// Issue 4 fix: remove domainHint — short queries no longer inherit previous conversation context
 function expandQuery(query) {
   const words = query.trim().split(/\s+/);
   if (words.length > 4) return query;
@@ -41,7 +41,8 @@ export async function handleChatStream(req, res) {
 
   const sessionId = providedSessionId || uuidv4();
   const convId    = providedConvId || uuidv4();
-  const answerId  = uuidv4();
+  const answerId  = uuidv4();   // memory turn ID (existing)
+  const answerKey = uuidv4();   // Supabase UUID — distinct per answer, returned to frontend
 
   getOrCreateSession(sessionId);
 
@@ -86,23 +87,19 @@ export async function handleChatStream(req, res) {
 
     const contextText = formatContextForPrompt(results);
 
-    // Get deleted doc IDs for this session to filter stale memory turns
     const deletedDocIds = getDeletedDocumentIds(sessionId);
-
     const allRecentTurns = getRecentTurns(convId, 10);
 
-    // Filter out assistant turns (and their preceding user turns) that cited deleted docs
     const filteredTurns = [];
     for (let i = 0; i < allRecentTurns.length; i++) {
       const turn = allRecentTurns[i];
       if (turn.role === 'assistant') {
         const citesDeletedDoc = turn.citations?.some(c => deletedDocIds.has(c.documentId));
         if (citesDeletedDoc) {
-          // Also remove the preceding user turn if it's the one that prompted this answer
           if (filteredTurns.length > 0 && filteredTurns[filteredTurns.length - 1].role === 'user') {
             filteredTurns.pop();
           }
-          continue; // skip this assistant turn
+          continue;
         }
       }
       filteredTurns.push(turn);
@@ -164,13 +161,10 @@ CURRENT QUESTION: ${query}`;
     }
 
     const isOutOfScope = OUT_OF_SCOPE_PATTERN.test(fullResponse);
-
     const matchedCitations = citations.filter(c => citedIndices.includes(c.index));
 
     const indexMap = new Map();
-    citedIndices.forEach((oldIdx, i) => {
-      indexMap.set(oldIdx, i + 1);
-    });
+    citedIndices.forEach((oldIdx, i) => indexMap.set(oldIdx, i + 1));
 
     const rewrittenResponse = fullResponse.replace(/\[(\d+)\]/g, (match, num) => {
       const newIdx = indexMap.get(parseInt(num));
@@ -198,8 +192,18 @@ CURRENT QUESTION: ${query}`;
 
     addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
+    // Log to Supabase — fire-and-forget (non-fatal)
+    logAnswer({
+      sessionId,
+      answerKey,
+      query,
+      chunks: results,
+      llmResponse: rewrittenResponse
+    }).catch(err => console.error('[supabase] logAnswer error:', err.message));
+
     sendEvent('complete', {
       answerId,
+      answerKey,         // ← returned to frontend for feedback PATCH
       response: rewrittenResponse,
       citations: finalCitations,
       coverage,

@@ -5,6 +5,7 @@ export interface SearchResult {
   pageNumber: number;
   excerpt: string;
   sourceType: 'session' | 'global' | 'web';
+  score?: number;
 }
 
 export interface Citation {
@@ -21,7 +22,8 @@ export interface Citation {
 }
 
 export interface ChatMessage {
-  id: string;
+  id: string;           // memory turn ID (turn_xxx)
+  answerKey?: string;   // Supabase UUID — used for feedback PATCH
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
@@ -49,12 +51,12 @@ export interface Document {
   source_type: 'seed' | 'session_upload';
   first_chunk_text?: string;
   fileSize?: number;
-  status?: 'indexing' | 'ready';  // present only for session uploads in progress
+  status?: 'indexing' | 'ready';
 }
 
 export type UploadState =
   | { status: 'idle' }
-  | { status: 'uploading' }                                          // phase 1: file being sent
+  | { status: 'uploading' }
   | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
   | {
       status: 'indexing';
@@ -62,7 +64,7 @@ export type UploadState =
       totalChunks: number;
       setIndex: number;
       totalSets: number;
-    }                                                                 // phase 2: embedding in progress
+    }
   | { status: 'complete' }
   | { status: 'error'; error: string; code: string };
 
