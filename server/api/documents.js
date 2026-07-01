@@ -25,6 +25,7 @@ import {
   getAllDocuments
 } from '../services/sessionService.js';
 import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
+import { clearMemory } from '../services/memoryService.js';
 
 const router = Router();
 
@@ -329,7 +330,6 @@ export async function deleteDocument(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
   try {
-    // Step 1: Delete vectors from Chroma
     if (sessionId) {
       try {
         const { collection } = await getSessionCollection(sessionId);
@@ -341,9 +341,12 @@ export async function deleteDocument(req, res) {
       }
 
       removeDocumentFromSession(sessionId, documentId);
+
+      // Clear backend memory so LLM forgets deleted doc context
+      clearMemory(sessionId);
+      console.log(`[delete] Cleared memory for session ${sessionId}`);
     }
 
-    // Step 2: Delete physical file by filename
     if (filename) {
       const filePath = path.join(uploadDir, filename);
       if (fs.existsSync(filePath)) {
@@ -366,7 +369,6 @@ export async function getDocumentFile(req, res) {
 
   try {
     if (filename) {
-      // Check session uploads first
       const uploadPath = path.join(uploadDir, filename);
       if (fs.existsSync(uploadPath)) {
         res.setHeader('Content-Type', 'application/pdf');
@@ -374,7 +376,6 @@ export async function getDocumentFile(req, res) {
         return fs.createReadStream(uploadPath).pipe(res);
       }
 
-      // Fall back to seed documents
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
         res.setHeader('Content-Type', 'application/pdf');
@@ -382,7 +383,6 @@ export async function getDocumentFile(req, res) {
         return fs.createReadStream(seedPath).pipe(res);
       }
 
-      // Fuzzy match in seed dir
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
         const match   = allPdfs.find(f => f.includes(path.parse(filename).name));

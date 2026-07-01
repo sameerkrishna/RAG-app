@@ -20,21 +20,10 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleViewPdf = async (source: SearchResult) => {
+  const handleViewPdf = (source: SearchResult) => {
     const url = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) {
-        alert(`"${source.filename}" is no longer available.`);
-        return;
-      }
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const pageUrl = source.pageNumber ? `${objectUrl}#page=${source.pageNumber}` : objectUrl;
-      window.open(pageUrl, '_blank');
-    } catch {
-      alert(`Could not load "${source.filename}".`);
-    }
+    const pageUrl = source.pageNumber ? `${url}#page=${source.pageNumber}` : url;
+    window.open(pageUrl, '_blank');
   };
 
   const citationIndexMap = new Map<string, number>();
