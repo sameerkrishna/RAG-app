@@ -10,6 +10,8 @@ import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
+// Persists across remounts within the same browser tab (e.g. KB navigation)
+const SESSION_INIT_KEY = 'rag_session_inited';
 
 interface AssistantProps {
   sessionId: string;
@@ -36,10 +38,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
-  const initFiredRef = useRef<boolean>(false);
 
-  // On mount: if messages already restored from initial state (navigation back), restore memory.
-  // Otherwise this is a hard reload — start fresh.
+  // On mount: restore conversation if navigating back from KB
   useEffect(() => {
     if (activeConvId) {
       const conv = getAllConversations().find(c => c.id === activeConvId);
@@ -49,14 +49,10 @@ export default function Assistant({ sessionId }: AssistantProps) {
     }
   }, []);
 
-  // Persist activeConvId to sessionStorage whenever it changes
   useEffect(() => {
-    if (activeConvId) {
-      sessionStorage.setItem(ACTIVE_CONV_KEY, activeConvId);
-    }
+    if (activeConvId) sessionStorage.setItem(ACTIVE_CONV_KEY, activeConvId);
   }, [activeConvId]);
 
-  // Refresh sidebar list whenever activeConvId or message count changes
   useEffect(() => {
     setConversations(getAllConversations());
   }, [activeConvId, messages.length]);
@@ -66,8 +62,18 @@ export default function Assistant({ sessionId }: AssistantProps) {
   }, [messages]);
 
   useEffect(() => {
-    if (initFiredRef.current) return;
-    initFiredRef.current = true;
+    const alreadyInited = sessionStorage.getItem(SESSION_INIT_KEY) === sessionId;
+
+    if (alreadyInited) {
+      // Remount (e.g. navigated back from KB) — skip the fetch but keep
+      // sessionInitRef.current as a resolved promise so sendMessage never blocks.
+      console.log('[session] Already inited this tab, skipping fetch');
+      sessionInitRef.current = Promise.resolve();
+      return;
+    }
+
+    console.log('[session] Firing session/init for', sessionId);
+    sessionStorage.setItem(SESSION_INIT_KEY, sessionId);
     sessionInitRef.current = fetch('/api/session/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
