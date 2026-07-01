@@ -108,7 +108,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    await deleteDocument(deleteTarget.document_id);
+    await deleteDocument(deleteTarget.document_id, deleteTarget.filename);
     setDeleteTarget(null);
   };
 
