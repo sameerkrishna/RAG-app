@@ -10,8 +10,11 @@ import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
-// Persists across remounts within the same browser tab (e.g. KB navigation)
-const SESSION_INIT_KEY = 'rag_session_inited';
+
+// Module-level guard: persists across remounts (KB navigation) because the
+// JS module stays loaded, but is wiped on hard reload / new tab — unlike
+// sessionStorage which survives hard reloads.
+const initedSessions = new Set<string>();
 
 interface AssistantProps {
   sessionId: string;
@@ -62,18 +65,16 @@ export default function Assistant({ sessionId }: AssistantProps) {
   }, [messages]);
 
   useEffect(() => {
-    const alreadyInited = sessionStorage.getItem(SESSION_INIT_KEY) === sessionId;
-
-    if (alreadyInited) {
-      // Remount (e.g. navigated back from KB) — skip the fetch but keep
-      // sessionInitRef.current as a resolved promise so sendMessage never blocks.
-      console.log('[session] Already inited this tab, skipping fetch');
+    if (initedSessions.has(sessionId)) {
+      // Remount (e.g. navigated back from KB) — skip fetch, give sendMessage
+      // a resolved promise so it never blocks on null.
+      console.log('[session] Already inited, skipping fetch');
       sessionInitRef.current = Promise.resolve();
       return;
     }
 
     console.log('[session] Firing session/init for', sessionId);
-    sessionStorage.setItem(SESSION_INIT_KEY, sessionId);
+    initedSessions.add(sessionId);
     sessionInitRef.current = fetch('/api/session/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
