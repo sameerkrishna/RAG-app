@@ -40,7 +40,7 @@ const seedDir = path.resolve(__dirname, '../../seed_documents');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`)
+  filename: (req, file, cb) => cb(null, sanitizeFilename(file.originalname))
 });
 
 const upload = multer({
@@ -153,7 +153,7 @@ export async function handleUpload(req, res) {
       return res.end();
     }
 
-    const documentId = path.parse(file.filename).name;
+    const documentId = uuidv4();
     const rawChunks  = chunkText(fullText, { chunkSizeTokens: 1000, overlapTokens: 200 });
 
     if (rawChunks.length === 0) {
@@ -252,8 +252,8 @@ export async function handleUpload(req, res) {
           setEmbeddings.map(e => ({ text: e.text, metadata: e.metadata })),
           setEmbeddings.map(e => e.embedding),
           setEmbeddings.map(e => e.id)
-        ).then(() => console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`)
-        ).catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
+        ).then(() => console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`))
+        .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
 
         sseEvent(res, 'embedding_progress', {
           processedChunks, totalChunks,
@@ -325,32 +325,33 @@ export async function listDocumentsHandler(req, res) {
 
 export async function deleteDocument(req, res) {
   const { documentId } = req.params;
+  const filename = req.query.filename;
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
   try {
-    // Step 1: Delete vectors from Chroma (best-effort — don't let failures block cleanup)
+    // Step 1: Delete vectors from Chroma
     if (sessionId) {
       try {
         const { collection } = await getSessionCollection(sessionId);
         if (collection) {
           await deleteDocumentVectors(collection, documentId);
-          // No cache invalidation needed — the collection handle remains valid after
-          // vector deletion; the next query will naturally see the updated state.
         }
       } catch (chromaErr) {
         console.warn(`[delete] Chroma delete failed for ${documentId}:`, chromaErr.message);
       }
 
-      // Step 2: Always remove from in-memory session.documents regardless of
-      // Chroma result (Bug 1 + Bug 2 fix)
       removeDocumentFromSession(sessionId, documentId);
     }
 
-    // Step 3: Delete physical file from /tmp/uploads
-    const tmpPath = path.join(uploadDir, `${documentId}.pdf`);
-    if (fs.existsSync(tmpPath)) {
-      fs.unlinkSync(tmpPath);
-      console.log(`[delete] Removed file: ${tmpPath}`);
+    // Step 2: Delete physical file by filename
+    if (filename) {
+      const filePath = path.join(uploadDir, filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`[delete] Removed file: ${filePath}`);
+      } else {
+        console.warn(`[delete] File not found on disk: ${filePath}`);
+      }
     }
 
     res.json({ success: true, documentId });
@@ -361,18 +362,19 @@ export async function deleteDocument(req, res) {
 }
 
 export async function getDocumentFile(req, res) {
-  const { documentId } = req.params;
   const filename = req.query.filename;
 
   try {
-    const uploadPath = path.join(uploadDir, `${documentId}.pdf`);
-    if (fs.existsSync(uploadPath)) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', contentDisposition(`${documentId}.pdf`));
-      return fs.createReadStream(uploadPath).pipe(res);
-    }
-
     if (filename) {
+      // Check session uploads first
+      const uploadPath = path.join(uploadDir, filename);
+      if (fs.existsSync(uploadPath)) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', contentDisposition(filename));
+        return fs.createReadStream(uploadPath).pipe(res);
+      }
+
+      // Fall back to seed documents
       const seedPath = path.join(seedDir, filename);
       if (fs.existsSync(seedPath)) {
         res.setHeader('Content-Type', 'application/pdf');
@@ -380,6 +382,7 @@ export async function getDocumentFile(req, res) {
         return fs.createReadStream(seedPath).pipe(res);
       }
 
+      // Fuzzy match in seed dir
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
         const match   = allPdfs.find(f => f.includes(path.parse(filename).name));

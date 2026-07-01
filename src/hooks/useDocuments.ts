@@ -89,7 +89,6 @@ export function useDocuments(sessionId: string) {
                   totalSets: payload.totalSets
                 });
 
-                // Optimistically insert doc — skip if already in list (e.g. from a prior fetchDocuments)
                 const newDoc: Document = {
                   document_id: payload.documentId,
                   filename: payload.filename,
@@ -127,7 +126,6 @@ export function useDocuments(sessionId: string) {
                 result = payload;
                 console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename} — ${payload.document.chunkCount} chunks indexed`);
                 setUploadState({ status: 'complete' });
-                // Refresh from server — single source of truth for final state
                 await fetchDocuments();
                 setTimeout(() => setUploadState({ status: 'idle' }), 3000);
 
@@ -161,9 +159,9 @@ export function useDocuments(sessionId: string) {
     }
   }, [sessionId, fetchDocuments]);
 
-  const deleteDocument = useCallback(async (documentId: string) => {
+  const deleteDocument = useCallback(async (documentId: string, filename: string) => {
     try {
-      const response = await fetch(`/api/documents/${documentId}`, {
+      const response = await fetch(`/api/documents/${documentId}?filename=${encodeURIComponent(filename)}`, {
         method: 'DELETE',
         headers: { 'x-session-id': sessionId }
       });

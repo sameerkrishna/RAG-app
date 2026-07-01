@@ -21,15 +21,19 @@ export default function SourceDrawer({ isOpen, onClose, sources, citations = [] 
   };
 
   const handleViewPdf = async (source: SearchResult) => {
-    const baseUrl = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
+    const url = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
     try {
-      const res = await fetch(baseUrl);
+      const res = await fetch(url);
+      if (!res.ok) {
+        alert(`"${source.filename}" is no longer available.`);
+        return;
+      }
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
       const pageUrl = source.pageNumber ? `${objectUrl}#page=${source.pageNumber}` : objectUrl;
       window.open(pageUrl, '_blank');
     } catch {
-      window.open(baseUrl, '_blank');
+      alert(`Could not load "${source.filename}".`);
     }
   };
 
