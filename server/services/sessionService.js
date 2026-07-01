@@ -65,7 +65,10 @@ export function deleteSession(sessionId) {
  */
 export async function initSessionWithGlobalDocs(sessionId) {
   console.log(`🔑 Session init: ${sessionId}`);
-  if (seededSessions.has(sessionId)) return;
+  if (seededSessions.has(sessionId)) {
+    console.log(`[session] Already seeded ${sessionId}, skipping`);
+    return;
+  }
 
   try {
     const globalCollection = await getGlobalCollection();
@@ -163,19 +166,42 @@ export async function initSessionWithGlobalDocs(sessionId) {
   }
 }
 
+/**
+ * Upsert a document into the session.
+ * If a doc with the same id already exists, update it in place (no duplicate).
+ * Supports partial updates — only provided fields overwrite existing values.
+ */
 export function addDocumentToSession(sessionId, documentInfo) {
   const session = getSession(sessionId);
   if (!session) return false;
+
+  const existing = session.documents.find(d => d.id === documentInfo.id);
+
+  if (existing) {
+    // Upsert — update fields that were provided
+    if (documentInfo.chunkCount  !== undefined) existing.chunkCount  = documentInfo.chunkCount;
+    if (documentInfo.pageCount   !== undefined) existing.pageCount   = documentInfo.pageCount;
+    if (documentInfo.fileSize    !== undefined) existing.fileSize    = documentInfo.fileSize;
+    if (documentInfo.status      !== undefined) existing.status      = documentInfo.status;
+    if (documentInfo.filename    !== undefined) existing.filename    = documentInfo.filename;
+    session.lastAccessed = new Date();
+    console.log(`[session] Updated doc ${documentInfo.id} — status=${existing.status}, chunks=${existing.chunkCount}`);
+    return true;
+  }
+
+  // New doc — push
   session.documents.push({
     id: documentInfo.id,
     filename: documentInfo.filename,
     fileSize: documentInfo.fileSize,
     pageCount: documentInfo.pageCount,
     uploadTimestamp: new Date(),
-    chunkCount: documentInfo.chunkCount,
-    sourceType: 'session_upload'
+    chunkCount: documentInfo.chunkCount ?? 0,
+    sourceType: 'session_upload',
+    status: documentInfo.status ?? 'indexing'
   });
   session.lastAccessed = new Date();
+  console.log(`[session] Added doc ${documentInfo.id} — status=${documentInfo.status ?? 'indexing'}`);
   return true;
 }
 
@@ -245,7 +271,8 @@ export function getAllDocuments(sessionId) {
     page_count: doc.pageCount ?? 0,
     upload_timestamp: doc.uploadTimestamp || null,
     source_type: doc.sourceType === 'session_upload' ? 'session_upload' : 'seed',
-    fileSize: doc.fileSize || null
+    fileSize: doc.fileSize || null,
+    status: doc.status ?? null     // pass through for frontend 'indexing' tag
   });
 
   return {

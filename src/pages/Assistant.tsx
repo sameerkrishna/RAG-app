@@ -10,6 +10,8 @@ import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
+// sessionStorage key to guard against re-firing session/init on remount (e.g. navigating to KB and back)
+const SESSION_INIT_KEY = 'rag_session_inited';
 
 interface AssistantProps {
   sessionId: string;
@@ -36,10 +38,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
-  const initFiredRef = useRef<boolean>(false);
 
-  // On mount: if messages already restored from initial state (navigation back), restore memory.
-  // Otherwise this is a hard reload — start fresh.
+  // Restore conversation on mount
   useEffect(() => {
     if (activeConvId) {
       const conv = getAllConversations().find(c => c.id === activeConvId);
@@ -65,9 +65,17 @@ export default function Assistant({ sessionId }: AssistantProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Fire session/init only once per browser tab lifetime.
+  // Use sessionStorage as the guard — a useRef resets on every remount
+  // (e.g. when user navigates to /knowledge and back), causing a double init.
   useEffect(() => {
-    if (initFiredRef.current) return;
-    initFiredRef.current = true;
+    const alreadyInited = sessionStorage.getItem(SESSION_INIT_KEY);
+    if (alreadyInited === sessionId) {
+      console.log('[session] Already inited this tab, skipping session/init');
+      return;
+    }
+    console.log('[session] Firing session/init for', sessionId);
+    sessionStorage.setItem(SESSION_INIT_KEY, sessionId);
     sessionInitRef.current = fetch('/api/session/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
@@ -88,7 +96,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
   };
 
   const handleNewConversation = () => {
-    resetNavigationFlag(); // user explicitly starts fresh — clear the flag
+    resetNavigationFlag();
     clearMessages();
     sessionStorage.removeItem(ACTIVE_CONV_KEY);
     setSourceDrawerOpen(false);
@@ -96,7 +104,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
   };
 
   const handleNavigateToKB = () => {
-    markNavigationToKB(); // set flag before leaving so remount restores conv
+    markNavigationToKB();
     navigate('/knowledge');
   };
 
@@ -207,7 +215,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
             {!sidebarCollapsed && <span>Knowledge Base</span>}
           </button>
 
-          {/* Recents — only when expanded */}
           {!sidebarCollapsed && conversations.length > 0 && (
             <div className="pt-3">
               <p className="px-2 pb-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Recents</p>
@@ -237,7 +244,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
           )}
         </nav>
 
-        {/* User profile strip */}
         <div className={cn(
           'flex flex-shrink-0 items-center border-t p-3 gap-3',
           sidebarCollapsed && 'justify-center p-2'
@@ -287,7 +293,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
             </div>
           ) : (
             <>
-              {/* Top bar with conversation title */}
               <header className="flex h-14 flex-shrink-0 items-center border-b bg-background px-4">
                 <span className="text-sm font-semibold truncate">{activeConvTitle}</span>
               </header>
