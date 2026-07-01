@@ -10,8 +10,6 @@ import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
-// sessionStorage key to guard against re-firing session/init on remount (e.g. navigating to KB and back)
-const SESSION_INIT_KEY = 'rag_session_inited';
 
 interface AssistantProps {
   sessionId: string;
@@ -38,8 +36,10 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
+  const initFiredRef = useRef<boolean>(false);
 
-  // Restore conversation on mount
+  // On mount: if messages already restored from initial state (navigation back), restore memory.
+  // Otherwise this is a hard reload — start fresh.
   useEffect(() => {
     if (activeConvId) {
       const conv = getAllConversations().find(c => c.id === activeConvId);
@@ -65,17 +65,9 @@ export default function Assistant({ sessionId }: AssistantProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Fire session/init only once per browser tab lifetime.
-  // Use sessionStorage as the guard — a useRef resets on every remount
-  // (e.g. when user navigates to /knowledge and back), causing a double init.
   useEffect(() => {
-    const alreadyInited = sessionStorage.getItem(SESSION_INIT_KEY);
-    if (alreadyInited === sessionId) {
-      console.log('[session] Already inited this tab, skipping session/init');
-      return;
-    }
-    console.log('[session] Firing session/init for', sessionId);
-    sessionStorage.setItem(SESSION_INIT_KEY, sessionId);
+    if (initFiredRef.current) return;
+    initFiredRef.current = true;
     sessionInitRef.current = fetch('/api/session/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
