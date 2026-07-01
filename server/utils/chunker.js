@@ -1,9 +1,13 @@
 import { createHash } from 'crypto';
 
-const CHARS_PER_TOKEN = 4;
-const DEFAULT_CHUNK_SIZE_TOKENS = 1000;
-const DEFAULT_OVERLAP_TOKENS = 200;
-const MIN_CHUNK_CHARS = 100;
+const CHARS_PER_TOKEN     = 4;
+const TARGET_CHUNK_TOKENS = 800;   // soft target per chunk
+const MAX_CHUNK_TOKENS    = 1000;  // hard cap before forced split
+const OVERLAP_TOKENS      = 150;   // overlap when forced-splitting an oversized paragraph
+const MIN_CHUNK_CHARS     = 100;
+
+// Matches ALL-CAPS headings, markdown headings, or numbered section headings
+const HEADING_RE = /^(?:[A-Z][A-Z\s]{2,60}$|#{1,4}\s.+|(?:\d+\.)+\s.+)/m;
 
 export function estimateTokens(text) {
   if (!text || typeof text !== 'string') return 0;
@@ -27,56 +31,96 @@ function generateChunkId(text, filename) {
     .slice(0, 16);
 }
 
+/**
+ * Structure-aware chunking:
+ *  1. Split on blank lines (\n\n) into paragraphs.
+ *  2. A line matching HEADING_RE always starts a fresh chunk.
+ *  3. Accumulate paragraphs until the soft TARGET is reached, then flush.
+ *  4. Paragraphs larger than MAX are split with a sliding window + overlap as fallback.
+ */
 export function chunkText(text, options = {}) {
-  const chunkSizeTokens = options.chunkSizeTokens || DEFAULT_CHUNK_SIZE_TOKENS;
-  const overlapTokens = options.overlapTokens || DEFAULT_OVERLAP_TOKENS;
+  const targetChars  = (options.chunkSizeTokens || TARGET_CHUNK_TOKENS) * CHARS_PER_TOKEN;
+  const maxChars     = (options.maxChunkTokens  || MAX_CHUNK_TOKENS)    * CHARS_PER_TOKEN;
+  const overlapChars = (options.overlapTokens   || OVERLAP_TOKENS)      * CHARS_PER_TOKEN;
 
   if (!text || typeof text !== 'string') return [];
 
-  const chunkSizeChars = chunkSizeTokens * CHARS_PER_TOKEN;
-  const overlapChars = overlapTokens * CHARS_PER_TOKEN;
+  // 1. Split into paragraphs
+  const rawParas = text
+    .split(/\n{2,}/)
+    .map(p => p.trim())
+    .filter(p => p.length >= MIN_CHUNK_CHARS);
 
-  const chunks = [];
-  let start = 0;
-  let chunkIndex = 0;
+  const chunks     = [];
+  let   buffer     = '';
+  let   bufStart   = 0;
+  let   chunkIndex = 0;
+  let   charCursor = 0;
 
-  while (start < text.length) {
-    let end = start + chunkSizeChars;
-
-    if (end < text.length) {
-      const breakPoints = ['. ', '.\n', '! ', '? ', '\n\n', '\n', ' '];
-      const searchStart = end - Math.floor(chunkSizeChars * 0.2);
-
-      for (const breakpoint of breakPoints) {
-        const idx = text.lastIndexOf(breakpoint, end);
-        if (idx > searchStart && idx > start) {
-          end = idx + breakpoint.length;
-          break;
-        }
-      }
-    }
-
-    end = Math.min(end, text.length);
-    const chunkContent = text.slice(start, end).trim();
-
-    if (chunkContent.length >= MIN_CHUNK_CHARS) {
+  const flush = (forceText) => {
+    const content = (forceText ?? buffer).trim();
+    if (content.length >= MIN_CHUNK_CHARS) {
       chunks.push({
-        text: chunkContent,
-        tokenCount: estimateTokens(chunkContent),
-        charStart: start,
-        charEnd: end,
+        text:       content,
+        tokenCount: estimateTokens(content),
+        charStart:  bufStart,
+        charEnd:    bufStart + content.length,
         chunkIndex: chunkIndex++
       });
     }
+    buffer   = '';
+    bufStart = charCursor;
+  };
 
-    const nextStart = end - overlapChars;
-    start = nextStart > start ? nextStart : end;
+  for (const para of rawParas) {
+    const isHeading = HEADING_RE.test(para.split('\n')[0]);
 
-    if (chunkIndex > 10000) {
-      console.warn('Chunk limit reached, stopping');
-      break;
+    // 2. Heading always starts a new chunk
+    if (isHeading && buffer.length > 0) flush();
+
+    if (para.length > maxChars) {
+      // 3. Oversized paragraph -> sliding-window fallback
+      if (buffer.length > 0) flush();
+
+      let s = 0;
+      while (s < para.length) {
+        let e = s + targetChars;
+        if (e < para.length) {
+          const searchFrom = e - Math.floor(targetChars * 0.2);
+          for (const bp of ['. ', '.\n', '? ', '! ', '\n']) {
+            const idx = para.lastIndexOf(bp, e);
+            if (idx > searchFrom) { e = idx + bp.length; break; }
+          }
+        }
+        e = Math.min(e, para.length);
+        const slice = para.slice(s, e).trim();
+        if (slice.length >= MIN_CHUNK_CHARS) {
+          chunks.push({
+            text:       slice,
+            tokenCount: estimateTokens(slice),
+            charStart:  charCursor + s,
+            charEnd:    charCursor + e,
+            chunkIndex: chunkIndex++
+          });
+        }
+        const next = e - overlapChars;
+        s = next > s ? next : e;
+      }
+      charCursor += para.length + 2;
+      bufStart    = charCursor;
+      continue;
     }
+
+    // 4. Normal paragraph - accumulate until target
+    const tentative = buffer ? buffer + '\n\n' + para : para;
+    if (tentative.length > targetChars && buffer.length > 0) flush();
+
+    buffer     = buffer ? buffer + '\n\n' + para : para;
+    charCursor += para.length + 2;
   }
+
+  // 5. Flush remainder
+  flush();
 
   return chunks;
 }
@@ -90,31 +134,28 @@ export function chunkPDFContent(pdfData, options = {}) {
   }
 
   const cleanedText = cleanText(text);
-  const textChunks = chunkText(cleanedText, options);
+  const textChunks  = chunkText(cleanedText, options);
   const totalChunks = textChunks.length;
-
-  // FIX 4: use sourceType from options, fall back to 'pdf'
-  const sourceType = options.sourceType || 'pdf';
+  const sourceType  = options.sourceType || 'pdf';
 
   return textChunks.map(chunk => {
     const chunkId = generateChunkId(chunk.text, filename);
-
     return {
       text: chunk.text,
       metadata: {
-        document_id: documentId,
-        filename: filename,
-        chunk_id: chunkId,
-        chunk_index: chunk.chunkIndex,
-        total_chunks: totalChunks,
-        page_number: pageNumber || 1,
-        total_pages: totalPages || null,
-        section_title: extractSectionTitle(chunk.text),
-        source_type: sourceType,            // FIX 4
+        document_id:      documentId,
+        filename,
+        chunk_id:         chunkId,
+        chunk_index:      chunk.chunkIndex,
+        total_chunks:     totalChunks,
+        page_number:      pageNumber || 1,
+        total_pages:      totalPages || null,
+        section_title:    extractSectionTitle(chunk.text),
+        source_type:      sourceType,
         upload_timestamp: new Date().toISOString(),
-        char_start: chunk.charStart,
-        char_end: chunk.charEnd,
-        token_count: chunk.tokenCount
+        char_start:       chunk.charStart,
+        char_end:         chunk.charEnd,
+        token_count:      chunk.tokenCount
       }
     };
   });
