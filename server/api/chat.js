@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { retrieveForQuery, generateCitations, formatContextForPrompt } from '../services/retrievalService.js';
 import { streamResponse } from '../services/geminiService.js';
 import { addTurnWithCitations, getRecentTurns } from '../services/memoryService.js';
-import { getOrCreateSession } from '../services/sessionService.js';
+import { getOrCreateSession, getDeletedDocumentIds } from '../services/sessionService.js';
 
 const router = Router();
 
@@ -33,7 +33,6 @@ function expandQuery(query) {
 }
 
 export async function handleChatStream(req, res) {
-  // Issue 5 fix: extract convId from body — use as memory key instead of sessionId
   const { query, sessionId: providedSessionId, convId: providedConvId } = req.body;
 
   if (!query || typeof query !== 'string' || query.trim().length === 0) {
@@ -41,9 +40,8 @@ export async function handleChatStream(req, res) {
   }
 
   const sessionId = providedSessionId || uuidv4();
-  // Issue 5 fix: each conversation gets its own memory slot
-  const convId = providedConvId || uuidv4();
-  const answerId = uuidv4();
+  const convId    = providedConvId || uuidv4();
+  const answerId  = uuidv4();
 
   getOrCreateSession(sessionId);
 
@@ -58,7 +56,6 @@ export async function handleChatStream(req, res) {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  // Issue 5 fix: use convId for memory, not sessionId
   addTurnWithCitations(convId, 'user', query.trim());
 
   try {
@@ -89,13 +86,33 @@ export async function handleChatStream(req, res) {
 
     const contextText = formatContextForPrompt(results);
 
-    // Issues 3 & 6 fix: use convId for memory; structured Q&A format via formatMemoryForPrompt
-    const recentTurns = getRecentTurns(convId, 10);
-    const questions = recentTurns.filter(t => t.role === 'user');
-    const answers   = recentTurns.filter(t => t.role === 'assistant');
+    // Get deleted doc IDs for this session to filter stale memory turns
+    const deletedDocIds = getDeletedDocumentIds(sessionId);
+
+    const allRecentTurns = getRecentTurns(convId, 10);
+
+    // Filter out assistant turns (and their preceding user turns) that cited deleted docs
+    const filteredTurns = [];
+    for (let i = 0; i < allRecentTurns.length; i++) {
+      const turn = allRecentTurns[i];
+      if (turn.role === 'assistant') {
+        const citesDeletedDoc = turn.citations?.some(c => deletedDocIds.has(c.documentId));
+        if (citesDeletedDoc) {
+          // Also remove the preceding user turn if it's the one that prompted this answer
+          if (filteredTurns.length > 0 && filteredTurns[filteredTurns.length - 1].role === 'user') {
+            filteredTurns.pop();
+          }
+          continue; // skip this assistant turn
+        }
+      }
+      filteredTurns.push(turn);
+    }
+
+    const questions = filteredTurns.filter(t => t.role === 'user');
+    const answers   = filteredTurns.filter(t => t.role === 'assistant');
     const qSection  = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
     const aSection  = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
-    const memoryContext = recentTurns.length > 0
+    const memoryContext = filteredTurns.length > 0
       ? `Previous Questions:\n${qSection}\n\nPrevious Answers:\n${aSection}`
       : '';
 
@@ -136,7 +153,6 @@ CURRENT QUESTION: ${query}`;
       }
     }
 
-    // Extract cited indices in ORDER OF FIRST APPEARANCE
     const citedIndices = [];
     const seen = new Set();
     for (const match of fullResponse.matchAll(/\[(\d+)\]/g)) {
@@ -180,7 +196,6 @@ CURRENT QUESTION: ${query}`;
             return idxA - idxB;
           });
 
-    // Issue 5 fix: store assistant turn under convId
     addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
     sendEvent('complete', {

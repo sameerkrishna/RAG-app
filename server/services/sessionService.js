@@ -20,6 +20,7 @@ export function createSession(sessionId) {
     createdAt: new Date(),
     lastAccessed: new Date(),
     documents: [],
+    deletedDocumentIds: new Set(),   // track deleted doc IDs to filter prompt memory
     timeoutMinutes: DEFAULT_TIMEOUT_MINUTES
   };
   sessions.set(id, session);
@@ -178,7 +179,6 @@ export function addDocumentToSession(sessionId, documentInfo) {
   const existing = session.documents.find(d => d.id === documentInfo.id);
 
   if (existing) {
-    // Upsert — update fields that were provided
     if (documentInfo.chunkCount  !== undefined) existing.chunkCount  = documentInfo.chunkCount;
     if (documentInfo.pageCount   !== undefined) existing.pageCount   = documentInfo.pageCount;
     if (documentInfo.fileSize    !== undefined) existing.fileSize    = documentInfo.fileSize;
@@ -189,7 +189,6 @@ export function addDocumentToSession(sessionId, documentInfo) {
     return true;
   }
 
-  // New doc — push
   session.documents.push({
     id: documentInfo.id,
     filename: documentInfo.filename,
@@ -248,10 +247,18 @@ export function removeDocumentFromSession(sessionId, documentId) {
   const idx = session.documents.findIndex(d => d.id === documentId);
   if (idx >= 0) {
     session.documents.splice(idx, 1);
+    // Track deleted doc so its memory turns are excluded from future prompts
+    session.deletedDocumentIds.add(documentId);
     session.lastAccessed = new Date();
+    console.log(`[session] Removed doc ${documentId}, added to deletedDocumentIds`);
     return true;
   }
   return false;
+}
+
+export function getDeletedDocumentIds(sessionId) {
+  const session = getSession(sessionId);
+  return session?.deletedDocumentIds ?? new Set();
 }
 
 export function getSessionDocuments(sessionId) {
@@ -272,7 +279,7 @@ export function getAllDocuments(sessionId) {
     upload_timestamp: doc.uploadTimestamp || null,
     source_type: doc.sourceType === 'session_upload' ? 'session_upload' : 'seed',
     fileSize: doc.fileSize || null,
-    status: doc.status ?? null     // pass through for frontend 'indexing' tag
+    status: doc.status ?? null
   });
 
   return {
