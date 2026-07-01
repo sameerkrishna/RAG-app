@@ -14,6 +14,7 @@ export function useDocuments(sessionId: string) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
+      console.log('[useDocuments] fetchDocuments — session:', data.sessionDocuments?.length, 'global:', data.globalDocuments?.length);
       setDocuments(data.sessionDocuments || []);
       setGlobalDocuments(data.globalDocuments || []);
     } catch (error) {
@@ -81,7 +82,6 @@ export function useDocuments(sessionId: string) {
               console.log(`[useDocuments] SSE event: ${currentEvent}`, payload);
 
               if (currentEvent === 'upload_complete') {
-                // Phase 1 done — show doc immediately in list as 'indexing'
                 setUploadState({
                   status: 'upload_complete',
                   documentId: payload.documentId,
@@ -89,7 +89,7 @@ export function useDocuments(sessionId: string) {
                   totalSets: payload.totalSets
                 });
 
-                // Optimistically add doc to local list with status 'indexing'
+                // Optimistically insert doc — skip if already in list (e.g. from a prior fetchDocuments)
                 const newDoc: Document = {
                   document_id: payload.documentId,
                   filename: payload.filename,
@@ -100,8 +100,19 @@ export function useDocuments(sessionId: string) {
                   fileSize: payload.fileSize,
                   status: 'indexing'
                 };
-                setDocuments(prev => [newDoc, ...prev]);
-                console.log(`[useDocuments] Doc ${payload.filename} added to list as indexing`);
+                setDocuments(prev => {
+                  const alreadyExists = prev.some(d => d.document_id === payload.documentId);
+                  if (alreadyExists) {
+                    console.log(`[useDocuments] Doc ${payload.documentId} already in list — updating status to indexing`);
+                    return prev.map(d =>
+                      d.document_id === payload.documentId
+                        ? { ...d, status: 'indexing' as const }
+                        : d
+                    );
+                  }
+                  console.log(`[useDocuments] Doc ${payload.filename} optimistically added as indexing`);
+                  return [newDoc, ...prev];
+                });
 
               } else if (currentEvent === 'embedding_progress') {
                 setUploadState({
@@ -114,15 +125,10 @@ export function useDocuments(sessionId: string) {
 
               } else if (currentEvent === 'done') {
                 result = payload;
-                // Update the doc in the list: set final chunk count + status 'ready'
-                setDocuments(prev => prev.map(d =>
-                  d.document_id === payload.document.id
-                    ? { ...d, chunk_count: payload.document.chunkCount, status: 'ready' }
-                    : d
-                ));
-                setUploadState({ status: 'complete' });
                 console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename} — ${payload.document.chunkCount} chunks indexed`);
-
+                setUploadState({ status: 'complete' });
+                // Refresh from server — single source of truth for final state
+                await fetchDocuments();
                 setTimeout(() => setUploadState({ status: 'idle' }), 3000);
 
               } else if (currentEvent === 'error') {
@@ -153,7 +159,7 @@ export function useDocuments(sessionId: string) {
       });
       return null;
     }
-  }, [sessionId]);
+  }, [sessionId, fetchDocuments]);
 
   const deleteDocument = useCallback(async (documentId: string) => {
     try {

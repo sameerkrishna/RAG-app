@@ -13,7 +13,6 @@ interface KnowledgeBaseProps {
 const MAX_UPLOAD_SIZE_MB = 5;
 const MAX_PDFS = 3;
 
-// Simple progress bar component
 function ProgressBar({
   label,
   progress,
@@ -21,7 +20,7 @@ function ProgressBar({
   done
 }: {
   label: string;
-  progress: number;   // 0-100
+  progress: number;
   active: boolean;
   done: boolean;
 }) {
@@ -100,33 +99,31 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     }
   };
 
-  // Derived state for progress bars
-  const isUploading  = uploadState.status === 'uploading';
-  const isIndexing   = uploadState.status === 'indexing' || uploadState.status === 'upload_complete';
-  const isComplete   = uploadState.status === 'complete';
-  const isActive     = isUploading || isIndexing || isComplete;
+  const isUploading = uploadState.status === 'uploading';
+  const isIndexing  = uploadState.status === 'indexing' || uploadState.status === 'upload_complete';
+  const isComplete  = uploadState.status === 'complete';
+  const isActive    = isUploading || isIndexing || isComplete;
 
-  const phase1Done   = uploadState.status === 'upload_complete' || uploadState.status === 'indexing' || isComplete;
-  const phase1Progress = phase1Done ? 100 : isUploading ? 60 : 0;  // indeterminate while uploading
+  const phase1Done     = uploadState.status === 'upload_complete' || uploadState.status === 'indexing' || isComplete;
+  const phase1Progress = phase1Done ? 100 : isUploading ? 60 : 0;
 
   const phase2Progress = (() => {
     if (isComplete) return 100;
-    if (uploadState.status === 'indexing') {
+    if (uploadState.status === 'indexing')
       return Math.round((uploadState.processedChunks / uploadState.totalChunks) * 100);
-    }
     return 0;
   })();
-  const phase2Done = isComplete;
+  const phase2Done   = isComplete;
   const phase2Active = uploadState.status === 'indexing' || isComplete;
 
   const phase2Label = (() => {
-    if (uploadState.status === 'indexing') {
+    if (uploadState.status === 'indexing')
       return `Chunking & indexing — set ${uploadState.setIndex}/${uploadState.totalSets} (${uploadState.processedChunks}/${uploadState.totalChunks} chunks)`;
-    }
     if (isComplete) return 'Indexing complete';
     return 'Chunking & indexing';
   })();
 
+  const sessionUploadCount = documents.filter(d => d.source_type === 'session_upload').length;
   const allDocuments = [...documents, ...globalDocuments];
 
   return (
@@ -146,8 +143,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-6">
 
-          {/* Upload Section */}
-          {documents.filter(d => d.source_type === 'session_upload').length < MAX_PDFS && (
+          {/* Upload Section — hidden once at limit */}
+          {sessionUploadCount < MAX_PDFS && (
             <section className="rounded-xl border bg-card p-6 space-y-4">
               <div
                 className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
@@ -172,7 +169,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </p>
               </div>
 
-              {/* Selected file row */}
               {selectedFile && (
                 <div className="rounded-lg bg-secondary/50 p-4">
                   <div className="flex items-center justify-between">
@@ -193,7 +189,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Progress bars — shown while active */}
               {isActive && (
                 <div className="space-y-3 px-1">
                   <ProgressBar
@@ -208,8 +203,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                     active={phase2Active && !phase2Done}
                     done={phase2Done}
                   />
-
-                  {/* Status line */}
                   <div className="flex items-center gap-2 text-xs">
                     {isComplete ? (
                       <><CheckCircle className="h-3.5 w-3.5 text-success" /><span className="text-success">Successfully indexed</span></>
@@ -229,7 +222,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Error state */}
               {uploadState.status === 'error' && (
                 <div className="flex items-center gap-2 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4" />
@@ -240,7 +232,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
             </section>
           )}
 
-          {documents.filter(d => d.source_type === 'session_upload').length >= MAX_PDFS && (
+          {sessionUploadCount >= MAX_PDFS && (
             <div className="flex items-center gap-2 rounded-lg bg-warning/10 p-4 text-warning-foreground">
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm">Maximum {MAX_PDFS} PDF uploads reached. Delete existing uploads to add more.</span>
@@ -269,6 +261,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                       <div>
                         <h3 className="text-sm font-medium">{doc.filename}</h3>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+
+                          {/* Chunk count or indexing spinner */}
                           {doc.status === 'indexing' ? (
                             <span className="flex items-center gap-1">
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -277,22 +271,35 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                           ) : (
                             <span>{doc.chunk_count} chunks</span>
                           )}
+
                           <span>{doc.page_count} pages</span>
+
+                          {/* Source type badges */}
                           {doc.source_type === 'seed' && (
-                            <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">Seed</span>
+                            <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">
+                              Seed
+                            </span>
                           )}
+                          {doc.source_type === 'session_upload' && (
+                            <span className="rounded bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 uppercase">
+                              Session
+                            </span>
+                          )}
+
+                          {/* Transient status badges */}
                           {doc.status === 'indexing' && (
-                            <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 uppercase">Indexing</span>
+                            <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 uppercase">
+                              Indexing
+                            </span>
                           )}
-                          {doc.status === 'ready' && (
-                            <span className="rounded bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success uppercase">New</span>
-                          )}
+
                           {doc.upload_timestamp && doc.status !== 'indexing' && (
                             <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
                           )}
                         </div>
                       </div>
                     </div>
+
                     <div className="flex items-center gap-2">
                       {doc.source_type !== 'seed' && doc.status !== 'indexing' && (
                         <Button
