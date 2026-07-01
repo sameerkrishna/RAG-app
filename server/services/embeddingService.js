@@ -14,12 +14,14 @@ function getEmbeddingModel() {
   return embeddingModel;
 }
 
-const BATCH_SIZE = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
-const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 4;
+const BATCH_SIZE     = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
 const OUTPUT_DIMENSIONS = () => parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS) || 3072;
-const GROUP_WAIT_MS = 61000;
-const RETRY_WAIT_MS = 15000; // FIX 3: wait before individual chunk retries
+const GROUP_WAIT_MS  = 61000;
+const RETRY_WAIT_MS  = 15000;
 
+// Embed a single batch of texts (up to BATCH_SIZE).
+// Retries on 429 up to 5 times. Used by both generateEmbeddings and handleUpload.
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const maxAttempts = 5;
   const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
@@ -52,7 +54,7 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
 
     if (is429 && attempt < maxAttempts) {
       const retryDelay = error.retryAfter || GROUP_WAIT_MS;
-      console.log(`Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
+      console.log(`[embedding] Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
       await new Promise(resolve => setTimeout(resolve, retryDelay));
       return embedBatch(texts, taskType, attempt + 1);
     }
@@ -61,12 +63,23 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   }
 }
 
+// Exported for documents.js upload handler — embeds one batch group (up to BATCH_SIZE texts)
+// and returns raw vectors array. Caller manages parallelism, waiting, and Chroma writes.
+export async function embedSingleBatchGroup(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  console.log(`[embedding] embedSingleBatchGroup — ${texts.length} texts, taskType=${taskType}`);
+  const vectors = await embedBatch(texts, taskType);
+  console.log(`[embedding] embedSingleBatchGroup — got ${vectors.length} vectors`);
+  return vectors;
+}
+
+// Full pipeline: embed all chunks with built-in batching + waiting.
+// Used by seed ingestion and any callers that don't need streaming progress.
 export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT', onProgress) {
   if (!chunks || chunks.length === 0) return [];
 
-  const batchSize = BATCH_SIZE();
+  const batchSize     = BATCH_SIZE();
   const parallelCalls = PARALLEL_CALLS();
-  const embeddings = [];
+  const embeddings    = [];
 
   const batches = [];
   for (let i = 0; i < chunks.length; i += batchSize) {
@@ -77,10 +90,10 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
 
   for (let i = 0; i < batches.length; i += parallelCalls) {
     const parallelBatches = batches.slice(i, i + parallelCalls);
-    const groupNum = Math.floor(i / parallelCalls) + 1;
-    const chunksCovered = Math.min((i + parallelCalls) * batchSize, chunks.length);
+    const groupNum        = Math.floor(i / parallelCalls) + 1;
+    const chunksCovered   = Math.min((i + parallelCalls) * batchSize, chunks.length);
 
-    console.log(`  Embedding group ${groupNum}/${totalGroups} — ${parallelBatches.length} batch call(s) in parallel (chunks ${i * batchSize + 1}–${chunksCovered})...`);
+    console.log(`[embedding] Group ${groupNum}/${totalGroups} — ${parallelBatches.length} batch call(s) in parallel (chunks ${i * batchSize + 1}–${chunksCovered})...`);
 
     const results = await Promise.allSettled(
       parallelBatches.map(batch => embedBatch(batch.map(c => c.text), taskType))
@@ -92,7 +105,6 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
       if (result.status === 'fulfilled') {
         const vectors = result.value;
         batch.forEach((chunk, chunkIdx) => {
-          // FIX 2: correct fallback chunk ID — (i + batchIdx) is the absolute batch index
           const absoluteChunkIdx = (i + batchIdx) * batchSize + chunkIdx;
           embeddings.push({
             id: chunk.metadata?.chunk_id || `chunk_${absoluteChunkIdx}`,
@@ -102,7 +114,7 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
           });
         });
       } else {
-        console.warn(`  Batch ${i + batchIdx} failed, will retry individually:`, result.reason?.message);
+        console.warn(`[embedding] Batch ${i + batchIdx} failed, will retry individually:`, result.reason?.message);
         failedBatches.push({ batch, batchIdx: i + batchIdx });
       }
     });
@@ -113,13 +125,12 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
 
     const isLastGroup = i + parallelCalls >= batches.length;
     if (!isLastGroup || failedBatches.length > 0) {
-      console.log(`  Waiting ${GROUP_WAIT_MS / 1000}s before next group...`);
+      console.log(`[embedding] Waiting ${GROUP_WAIT_MS / 1000}s before next group...`);
       await new Promise(resolve => setTimeout(resolve, GROUP_WAIT_MS));
     }
 
-    // FIX 3: wait before retrying individual chunks to avoid immediate 429
     for (const { batch, batchIdx } of failedBatches) {
-      console.log(`  Waiting ${RETRY_WAIT_MS / 1000}s before retrying failed batch ${batchIdx}...`);
+      console.log(`[embedding] Waiting ${RETRY_WAIT_MS / 1000}s before retrying failed batch ${batchIdx}...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_WAIT_MS));
       for (const chunk of batch) {
         try {
@@ -130,9 +141,9 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
             metadata: chunk.metadata,
             text: chunk.text
           });
-          console.log(`  ✅ Retry succeeded for chunk ${chunk.metadata?.chunk_id}`);
+          console.log(`[embedding] ✅ Retry succeeded for chunk ${chunk.metadata?.chunk_id}`);
         } catch (err) {
-          console.error(`  ❌ Retry failed for chunk ${chunk.metadata?.chunk_id}:`, err.message);
+          console.error(`[embedding] ❌ Retry failed for chunk ${chunk.metadata?.chunk_id}:`, err.message);
         }
       }
     }

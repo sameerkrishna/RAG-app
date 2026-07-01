@@ -16,7 +16,7 @@ import {
 } from '../utils/errors.js';
 import { getSessionCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
 import { chunkText, cleanText } from '../utils/chunker.js';
-import { generateEmbeddings } from '../services/embeddingService.js';
+import { embedSingleBatchGroup } from '../services/embeddingService.js';
 import {
   getOrCreateSession,
   canAcceptUpload,
@@ -108,47 +108,63 @@ function getPageNumber(charStart, pageMap) {
   return pageMap[pageMap.length - 1]?.page || 1;
 }
 
+// SSE helper — writes a named event + JSON data
+function sseEvent(res, event, data) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// ── Upload handler (SSE streaming) ────────────────────────────────────────────
 export async function handleUpload(req, res) {
+  // Set up SSE immediately so the client can start reading
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const BATCH_SIZE    = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
+  const GROUP_WAIT_MS  = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS)   || 61000;
+
   try {
     const file = req.file;
     if (!file) throw new InvalidFileTypeError();
 
-    const sessionId = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
-    const session = getOrCreateSession(sessionId);
-    const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
+    const sessionId   = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
+    const session     = getOrCreateSession(sessionId);
+    const maxPDFs     = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
     const cleanFilename = sanitizeFilename(file.originalname);
 
     const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
     if (uploadedCount >= maxPDFs) {
       fs.unlinkSync(file.path);
-      throw new TooManyPDFsError(maxPDFs);
+      sseEvent(res, 'error', { message: `Maximum ${maxPDFs} uploads reached`, code: 'TOO_MANY_PDFS' });
+      return res.end();
     }
 
     if (session.documents.some(d => d.filename === cleanFilename)) {
       fs.unlinkSync(file.path);
-      throw new DuplicateFileError(cleanFilename);
+      sseEvent(res, 'error', { message: `"${cleanFilename}" already uploaded`, code: 'DUPLICATE_FILE' });
+      return res.end();
     }
 
+    // ── Phase 1: parse PDF ────────────────────────────────────────────────────
+    console.log(`[upload] [${sessionId}] Phase 1 — parsing ${cleanFilename} (${file.size} bytes)`);
     const { fullText, pageMap, totalPages } = await parsePDFWithBoundaryMap(file.path);
 
     if (!fullText || fullText.trim().length < 50) {
       fs.unlinkSync(file.path);
-      return res.status(422).json({
-        error: 'No extractable text found — PDF may be scanned or image-only',
-        code: 'EMPTY_PDF'
-      });
+      sseEvent(res, 'error', { message: 'No extractable text — PDF may be scanned or image-only', code: 'EMPTY_PDF' });
+      return res.end();
     }
 
     const documentId = path.parse(file.filename).name;
 
-    const rawChunks = chunkText(fullText, {
-      chunkSizeTokens: 1000,
-      overlapTokens: 200
-    });
+    const rawChunks = chunkText(fullText, { chunkSizeTokens: 1000, overlapTokens: 200 });
 
     if (rawChunks.length === 0) {
       fs.unlinkSync(file.path);
-      return res.status(422).json({ error: 'No content could be extracted from PDF', code: 'EMPTY_PDF' });
+      sseEvent(res, 'error', { message: 'No content could be extracted from PDF', code: 'EMPTY_PDF' });
+      return res.end();
     }
 
     const chunks = rawChunks.map((chunk, idx) => ({
@@ -169,74 +185,185 @@ export async function handleUpload(req, res) {
       }
     }));
 
-    const { collection } = await getSessionCollection(sessionId);
+    const totalChunks = chunks.length;
+    const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);                  // API calls
+    const totalSets    = Math.ceil(totalBatches / PARALLEL_CALLS);              // parallel groups
 
-    const embeddings = await generateEmbeddings(
-      chunks,
-      'RETRIEVAL_DOCUMENT',
-      ({ current_batch, total_batches }) => {
-        if (req.app.locals.progressCallbacks) {
-          req.app.locals.progressCallbacks.emit(`progress_${sessionId}`, {
-            documentId,
-            current_batch,
-            total_batches,
-            stage: 'embedding'
-          });
-        }
-      }
-    );
+    console.log(`[upload] [${sessionId}] ${totalChunks} chunks → ${totalBatches} API calls → ${totalSets} sets of ${PARALLEL_CALLS} parallel`);
 
-    if (embeddings.length === 0) {
-      fs.unlinkSync(file.path);
-      return res.status(503).json({ error: 'Failed to generate embeddings', code: 'EMBEDDING_FAILED' });
-    }
+    // Phase 1 complete — emit event and add doc to session immediately with status 'indexing'
+    sseEvent(res, 'upload_complete', {
+      documentId,
+      filename: cleanFilename,
+      fileSize: file.size,
+      pageCount: totalPages,
+      totalChunks,
+      totalBatches,
+      totalSets
+    });
 
-    await addVectors(
-      collection,
-      embeddings.map(e => ({ text: e.text, metadata: e.metadata })),
-      embeddings.map(e => e.embedding),
-      embeddings.map(e => e.id)
-    );
-
-    invalidateSessionCollectionCache(sessionId);
-
+    // Add to session cache immediately so it appears in the doc list with 'indexing' status
     addDocumentToSession(sessionId, {
       id: documentId,
       filename: cleanFilename,
       fileSize: file.size,
       pageCount: totalPages,
-      chunkCount: embeddings.length
+      chunkCount: 0,           // will be updated after indexing
+      status: 'indexing'
     });
 
-    res.status(201).json({
-      success: true,
+    console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
+
+    // ── Phase 2: embed + add to Chroma in sets ────────────────────────────────
+    const { collection } = await getSessionCollection(sessionId);
+    let processedChunks = 0;
+    const allEmbeddings = [];
+
+    // Split chunks into batches of BATCH_SIZE
+    const batches = [];
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      batches.push(chunks.slice(i, i + BATCH_SIZE));
+    }
+
+    // Group batches into sets of PARALLEL_CALLS
+    const sets = [];
+    for (let i = 0; i < batches.length; i += PARALLEL_CALLS) {
+      sets.push(batches.slice(i, i + PARALLEL_CALLS));
+    }
+
+    console.log(`[upload] [${sessionId}] Phase 2 start — ${sets.length} sets`);
+
+    for (let setIdx = 0; setIdx < sets.length; setIdx++) {
+      const isLastSet = setIdx === sets.length - 1;
+      const currentSet = sets[setIdx];
+      const setChunkCount = currentSet.reduce((acc, b) => acc + b.length, 0);
+
+      console.log(`[upload] [${sessionId}] Set ${setIdx + 1}/${sets.length} — embedding ${currentSet.length} batch call(s) (${setChunkCount} chunks) in parallel`);
+
+      // 1. Embed all batches in this set in parallel
+      const embedResults = await Promise.allSettled(
+        currentSet.map(batch => embedSingleBatchGroup(batch.map(c => c.text)))
+      );
+
+      // Collect successful embeddings for this set
+      const setEmbeddings = [];
+      embedResults.forEach((result, batchIdx) => {
+        const batch = currentSet[batchIdx];
+        if (result.status === 'fulfilled') {
+          const vectors = result.value;
+          batch.forEach((chunk, chunkIdx) => {
+            setEmbeddings.push({
+              id: chunk.metadata.chunk_id,
+              embedding: vectors[chunkIdx],
+              metadata: chunk.metadata,
+              text: chunk.text
+            });
+          });
+          console.log(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} embedded OK (${batch.length} chunks)`);
+        } else {
+          console.error(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} FAILED:`, result.reason?.message);
+        }
+      });
+
+      processedChunks += setEmbeddings.length;
+      allEmbeddings.push(...setEmbeddings);
+
+      console.log(`[upload] [${sessionId}] Set ${setIdx + 1} embedded — ${processedChunks}/${totalChunks} chunks so far`);
+
+      if (!isLastSet) {
+        // Start 60s timer immediately, add to Chroma concurrently
+        console.log(`[upload] [${sessionId}] Starting ${GROUP_WAIT_MS / 1000}s timer + Chroma write concurrently for set ${setIdx + 1}`);
+        const timer = new Promise(r => setTimeout(r, GROUP_WAIT_MS));
+        const chromaWrite = addVectors(
+          collection,
+          setEmbeddings.map(e => ({ text: e.text, metadata: e.metadata })),
+          setEmbeddings.map(e => e.embedding),
+          setEmbeddings.map(e => e.id)
+        ).then(() => {
+          console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`);
+        }).catch(err => {
+          console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message);
+        });
+
+        // Emit progress after embedding (Chroma write still in flight)
+        sseEvent(res, 'embedding_progress', {
+          processedChunks,
+          totalChunks,
+          setIndex: setIdx + 1,
+          totalSets,
+          waitingMs: GROUP_WAIT_MS,
+          chromaWriteComplete: false
+        });
+
+        // Wait for both timer and Chroma before moving to next set
+        await Promise.all([timer, chromaWrite]);
+        console.log(`[upload] [${sessionId}] Timer + Chroma both done for set ${setIdx + 1}, proceeding to set ${setIdx + 2}`);
+
+      } else {
+        // Last set — await Chroma directly, no timer
+        console.log(`[upload] [${sessionId}] Last set ${setIdx + 1} — awaiting Chroma write directly`);
+        await addVectors(
+          collection,
+          setEmbeddings.map(e => ({ text: e.text, metadata: e.metadata })),
+          setEmbeddings.map(e => e.embedding),
+          setEmbeddings.map(e => e.id)
+        );
+        console.log(`[upload] [${sessionId}] Chroma write complete for last set (${setEmbeddings.length} vectors)`);
+
+        sseEvent(res, 'embedding_progress', {
+          processedChunks,
+          totalChunks,
+          setIndex: setIdx + 1,
+          totalSets,
+          waitingMs: 0,
+          chromaWriteComplete: true
+        });
+      }
+    }
+
+    // Update session doc with final chunk count and status 'ready'
+    invalidateSessionCollectionCache(sessionId);
+    addDocumentToSession(sessionId, {
+      id: documentId,
+      filename: cleanFilename,
+      fileSize: file.size,
+      pageCount: totalPages,
+      chunkCount: allEmbeddings.length,
+      status: 'ready'
+    });
+
+    console.log(`[upload] [${sessionId}] ✅ Done — ${allEmbeddings.length} vectors in Chroma for ${cleanFilename}`);
+
+    sseEvent(res, 'done', {
       document: {
         id: documentId,
         filename: cleanFilename,
         fileSize: file.size,
         pageCount: totalPages,
-        chunkCount: embeddings.length,
+        chunkCount: allEmbeddings.length,
         uploadTimestamp: new Date().toISOString()
       },
       sessionId
     });
 
+    res.end();
+
   } catch (error) {
     if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+      try { fs.unlinkSync(req.file.path); } catch {}
     }
-    console.error('Upload error:', error);
-    res.status(error.statusCode || 500).json({
-      error: error.message,
+    console.error('[upload] Unhandled error:', error);
+    sseEvent(res, 'error', {
+      message: error.message || 'Upload failed',
       code: error.code || 'UPLOAD_ERROR'
     });
+    res.end();
   }
 }
 
 export async function listDocumentsHandler(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
   try {
-    // Ensure session object exists in memory (no-op if already created)
     getOrCreateSession(sessionId);
     const documents = getAllDocuments(sessionId);
     res.json(documents);

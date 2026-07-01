@@ -33,8 +33,8 @@ export interface ChatMessage {
 }
 
 export interface CoverageInfo {
-  confidence: number;   // 0-100 percentage
-  topScore: number;     // highest chunk similarity score
+  confidence: number;
+  topScore: number;
   level?: 'high' | 'medium' | 'low';
   score?: number;
   reason?: string;
@@ -49,13 +49,20 @@ export interface Document {
   source_type: 'seed' | 'session_upload';
   first_chunk_text?: string;
   fileSize?: number;
+  status?: 'indexing' | 'ready';  // present only for session uploads in progress
 }
 
 export type UploadState =
   | { status: 'idle' }
-  | { status: 'uploading' }
-  | { status: 'processing'; stage: string }
-  | { status: 'embedding'; progress: number; total: number }
+  | { status: 'uploading' }                                          // phase 1: file being sent
+  | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
+  | {
+      status: 'indexing';
+      processedChunks: number;
+      totalChunks: number;
+      setIndex: number;
+      totalSets: number;
+    }                                                                 // phase 2: embedding in progress
   | { status: 'complete' }
   | { status: 'error'; error: string; code: string };
 
