@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDocuments } from '../hooks/useDocuments';
-import { Upload, FileIcon, Trash2, AlertCircle, Loader2, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Upload, FileIcon, Trash2, AlertCircle, Loader2, CheckCircle, ArrowLeft, Files } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { formatBytes, formatTimestamp } from '../lib/utils';
 import type { Document } from '../types';
@@ -10,19 +10,15 @@ interface KnowledgeBaseProps {
   sessionId: string;
 }
 
-const MAX_UPLOAD_SIZE_MB = 5;
-const MAX_PDFS = 3;
+// These mirror the .env defaults and are read via Vite env vars if available,
+// falling back to the same defaults the server uses.
+const MAX_UPLOAD_SIZE_MB = parseInt(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB || '5');
+const MAX_PDFS           = parseInt(import.meta.env.VITE_MAX_PDFS_PER_SESSION || '3');
 
 function ProgressBar({
-  label,
-  progress,
-  active,
-  done
+  label, progress, active, done
 }: {
-  label: string;
-  progress: number;
-  active: boolean;
-  done: boolean;
+  label: string; progress: number; active: boolean; done: boolean;
 }) {
   return (
     <div className="space-y-1">
@@ -56,18 +52,35 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     resetUploadState
   } = useDocuments(sessionId);
 
-  const [dragOver, setDragOver] = useState(false);
+  const [dragOver, setDragOver]         = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError]       = useState<string | null>(null);
+
+  const sessionUploads  = documents.filter(d => d.source_type === 'session_upload');
+  const uploadedCount   = sessionUploads.length;
+  const remainingUploads = Math.max(0, MAX_PDFS - uploadedCount);
+  const atLimit         = uploadedCount >= MAX_PDFS;
 
   const handleFileSelect = (file: File) => {
+    setFileError(null);
+
     if (file.type !== 'application/pdf') {
-      alert('Only PDF files are supported');
+      setFileError('Only PDF files are supported.');
       return;
     }
     if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
-      alert(`File exceeds ${MAX_UPLOAD_SIZE_MB}MB limit`);
+      setFileError(`File exceeds the ${MAX_UPLOAD_SIZE_MB} MB size limit.`);
       return;
     }
+    // Check duplicate by filename against already-uploaded session docs
+    const duplicate = sessionUploads.some(
+      d => d.filename.toLowerCase() === file.name.toLowerCase()
+    );
+    if (duplicate) {
+      setFileError(`"${file.name}" is already indexed in this session.`);
+      return;
+    }
+
     setSelectedFile(file);
   };
 
@@ -77,9 +90,9 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     if (result) setSelectedFile(null);
   };
 
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragOver(true); };
+  const handleDragOver  = (e: React.DragEvent) => { e.preventDefault(); setDragOver(true); };
   const handleDragLeave = () => setDragOver(false);
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop      = (e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
@@ -87,6 +100,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file);
+    // reset input so the same file can be re-selected after clearing
+    e.target.value = '';
   };
 
   const handleDelete = async (doc: Document) => {
@@ -123,7 +138,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     return 'Chunking & indexing';
   })();
 
-  const sessionUploadCount = documents.filter(d => d.source_type === 'session_upload').length;
   const allDocuments = [...documents, ...globalDocuments];
 
   return (
@@ -143,9 +157,26 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-6">
 
-          {/* Upload Section — hidden once at limit */}
-          {sessionUploadCount < MAX_PDFS && (
+          {/* Upload Section */}
+          {!atLimit && (
             <section className="rounded-xl border bg-card p-6 space-y-4">
+
+              {/* Upload counter */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Files className="h-4 w-4" />
+                  <span>Files uploaded: <span className="font-semibold text-foreground">{uploadedCount}</span></span>
+                </div>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                  remainingUploads === 1
+                    ? 'bg-amber-500/10 text-amber-600'
+                    : 'bg-primary/10 text-primary'
+                }`}>
+                  {remainingUploads} upload{remainingUploads !== 1 ? 's' : ''} remaining
+                </span>
+              </div>
+
+              {/* Drop zone */}
               <div
                 className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
                   dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/20'
@@ -165,10 +196,25 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                   </span>
                 </label>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Max {MAX_UPLOAD_SIZE_MB}MB · {MAX_PDFS} files per session
+                  PDF only · Max {MAX_UPLOAD_SIZE_MB} MB · {MAX_PDFS} files per session
                 </p>
               </div>
 
+              {/* File validation error */}
+              {fileError && (
+                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  {fileError}
+                  <button
+                    className="ml-auto text-xs underline opacity-70 hover:opacity-100"
+                    onClick={() => setFileError(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Selected file row */}
               {selectedFile && (
                 <div className="rounded-lg bg-secondary/50 p-4">
                   <div className="flex items-center justify-between">
@@ -189,6 +235,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
+              {/* Progress bars */}
               {isActive && (
                 <div className="space-y-3 px-1">
                   <ProgressBar
@@ -222,6 +269,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
+              {/* Server-side upload error */}
               {uploadState.status === 'error' && (
                 <div className="flex items-center gap-2 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4" />
@@ -232,10 +280,20 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
             </section>
           )}
 
-          {sessionUploadCount >= MAX_PDFS && (
-            <div className="flex items-center gap-2 rounded-lg bg-warning/10 p-4 text-warning-foreground">
-              <AlertCircle className="h-4 w-4" />
-              <span className="text-sm">Maximum {MAX_PDFS} PDF uploads reached. Delete existing uploads to add more.</span>
+          {/* At-limit banner */}
+          {atLimit && (
+            <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-800 dark:bg-amber-950/30">
+              <AlertCircle className="h-5 w-5 flex-shrink-0 text-amber-500" />
+              <div className="text-sm">
+                <span className="font-medium text-amber-700 dark:text-amber-400">Upload limit reached</span>
+                <span className="ml-1 text-amber-600 dark:text-amber-500">
+                  — {MAX_PDFS}/{MAX_PDFS} files used. Delete an existing upload to add more.
+                </span>
+              </div>
+              <div className="ml-auto flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
+                <Files className="h-3.5 w-3.5" />
+                {uploadedCount}/{MAX_PDFS}
+              </div>
             </div>
           )}
 
@@ -261,8 +319,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                       <div>
                         <h3 className="text-sm font-medium">{doc.filename}</h3>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-
-                          {/* Chunk count or indexing spinner */}
                           {doc.status === 'indexing' ? (
                             <span className="flex items-center gap-1">
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -271,35 +327,22 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                           ) : (
                             <span>{doc.chunk_count} chunks</span>
                           )}
-
                           <span>{doc.page_count} pages</span>
-
-                          {/* Source type badges */}
                           {doc.source_type === 'seed' && (
-                            <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">
-                              Seed
-                            </span>
+                            <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">Seed</span>
                           )}
                           {doc.source_type === 'session_upload' && (
-                            <span className="rounded bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 uppercase">
-                              Session
-                            </span>
+                            <span className="rounded bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 uppercase">Session</span>
                           )}
-
-                          {/* Transient status badges */}
                           {doc.status === 'indexing' && (
-                            <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 uppercase">
-                              Indexing
-                            </span>
+                            <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 uppercase">Indexing</span>
                           )}
-
                           {doc.upload_timestamp && doc.status !== 'indexing' && (
                             <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
                           )}
                         </div>
                       </div>
                     </div>
-
                     <div className="flex items-center gap-2">
                       {doc.source_type !== 'seed' && doc.status !== 'indexing' && (
                         <Button
