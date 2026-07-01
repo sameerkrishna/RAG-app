@@ -23,6 +23,7 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
   };
 
   const handleFeedback = async (type: 'positive' | 'negative') => {
+    if (feedbackSent) return;
     setFeedbackSent(type);
   };
 
@@ -77,7 +78,7 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
           </div>
         )}
 
-        {/* Coverage Badge — only show when answer actually used sources */}
+        {/* Coverage Badge */}
         {!isUser && message.coverage && message.coverage.confidence > 0 && message.citations && message.citations.length > 0 && (
           <span className="mt-2 text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">
             {message.coverage.confidence}% confidence
@@ -114,18 +115,30 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
                 <Button
                   variant="ghost"
                   size="icon"
+                  disabled={feedbackSent !== null}
                   onClick={() => handleFeedback('positive')}
-                  className={cn('h-8 w-8 text-muted-foreground hover:text-foreground', feedbackSent === 'positive' && 'text-success')}
+                  className={cn(
+                    'h-8 w-8 transition-colors',
+                    feedbackSent === 'positive'
+                      ? 'text-green-500 bg-green-500/10 hover:bg-green-500/10 hover:text-green-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
                 >
-                  <ThumbsUp className="h-3.5 w-3.5" />
+                  <ThumbsUp className={cn('h-3.5 w-3.5', feedbackSent === 'positive' && 'fill-green-500')} />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  disabled={feedbackSent !== null}
                   onClick={() => handleFeedback('negative')}
-                  className={cn('h-8 w-8 text-muted-foreground hover:text-foreground', feedbackSent === 'negative' && 'text-destructive')}
+                  className={cn(
+                    'h-8 w-8 transition-colors',
+                    feedbackSent === 'negative'
+                      ? 'text-red-500 bg-red-500/10 hover:bg-red-500/10 hover:text-red-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
                 >
-                  <ThumbsDown className="h-3.5 w-3.5" />
+                  <ThumbsDown className={cn('h-3.5 w-3.5', feedbackSent === 'negative' && 'fill-red-500')} />
                 </Button>
               </div>
             )}
