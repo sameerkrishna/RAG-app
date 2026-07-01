@@ -10,8 +10,6 @@ interface KnowledgeBaseProps {
   sessionId: string;
 }
 
-// These mirror the .env defaults and are read via Vite env vars if available,
-// falling back to the same defaults the server uses.
 const MAX_UPLOAD_SIZE_MB = parseInt(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB || '5');
 const MAX_PDFS           = parseInt(import.meta.env.VITE_MAX_PDFS_PER_SESSION || '3');
 
@@ -27,7 +25,7 @@ function ProgressBar({
           {label}
         </span>
         <span className="tabular-nums text-muted-foreground">
-          {done ? '100%' : active ? `${Math.round(progress)}%` : '—'}
+          {done ? '100%' : active ? `${Math.round(progress)}%` : '\u2014'}
         </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
@@ -56,10 +54,13 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError]       = useState<string | null>(null);
 
-  const sessionUploads  = documents.filter(d => d.source_type === 'session_upload');
-  const uploadedCount   = sessionUploads.length;
+  const sessionUploads   = documents.filter(d => d.source_type === 'session_upload');
+  const uploadedCount    = sessionUploads.length;
   const remainingUploads = Math.max(0, MAX_PDFS - uploadedCount);
-  const atLimit         = uploadedCount >= MAX_PDFS;
+  const atLimit          = uploadedCount >= MAX_PDFS;
+
+  // All docs visible in the KB — session uploads + global/seed docs
+  const allDocuments = [...documents, ...globalDocuments];
 
   const handleFileSelect = (file: File) => {
     setFileError(null);
@@ -72,8 +73,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       setFileError(`File exceeds the ${MAX_UPLOAD_SIZE_MB} MB size limit.`);
       return;
     }
-    // Check duplicate by filename against already-uploaded session docs
-    const duplicate = sessionUploads.some(
+    // Check duplicate against ALL indexed docs (session + seed)
+    const duplicate = allDocuments.some(
       d => d.filename.toLowerCase() === file.name.toLowerCase()
     );
     if (duplicate) {
@@ -100,7 +101,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file);
-    // reset input so the same file can be re-selected after clearing
     e.target.value = '';
   };
 
@@ -133,12 +133,10 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   const phase2Label = (() => {
     if (uploadState.status === 'indexing')
-      return `Chunking & indexing — set ${uploadState.setIndex}/${uploadState.totalSets} (${uploadState.processedChunks}/${uploadState.totalChunks} chunks)`;
+      return `Chunking & indexing \u2014 set ${uploadState.setIndex}/${uploadState.totalSets} (${uploadState.processedChunks}/${uploadState.totalChunks} chunks)`;
     if (isComplete) return 'Indexing complete';
     return 'Chunking & indexing';
   })();
-
-  const allDocuments = [...documents, ...globalDocuments];
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
@@ -196,7 +194,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                   </span>
                 </label>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  PDF only · Max {MAX_UPLOAD_SIZE_MB} MB · {MAX_PDFS} files per session
+                  PDF only \u00b7 Max {MAX_UPLOAD_SIZE_MB} MB \u00b7 {MAX_PDFS} files per session
                 </p>
               </div>
 
@@ -287,7 +285,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
               <div className="text-sm">
                 <span className="font-medium text-amber-700 dark:text-amber-400">Upload limit reached</span>
                 <span className="ml-1 text-amber-600 dark:text-amber-500">
-                  — {MAX_PDFS}/{MAX_PDFS} files used. Delete an existing upload to add more.
+                  \u2014 {MAX_PDFS}/{MAX_PDFS} files used. Delete an existing upload to add more.
                 </span>
               </div>
               <div className="ml-auto flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
