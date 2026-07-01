@@ -1,6 +1,8 @@
 import { CloudClient } from 'chromadb';
 import { v4 as uuidv4 } from 'uuid';
 
+const BATCH_SIZE = 300;
+
 let cloudClient = null;
 let globalCollection = null;
 const sessionCollections = new Map();
@@ -46,7 +48,7 @@ export async function getGlobalCollection() {
         },
         embeddingFunction: null
       });
-      console.log(`✅ Global collection ready: ${collectionName}`);
+      console.log(`\u2705 Global collection ready: ${collectionName}`);
     } catch (error) {
       console.error('Failed to connect to global collection:', error);
       throw error;
@@ -58,7 +60,7 @@ export async function getGlobalCollection() {
 /**
  * Returns { collection, isNew }.
  * isNew = true  → freshly created, needs seeding from global.
- * isNew = false → already existed on Chroma Cloud, respect its current state (user may have added/deleted PDFs).
+ * isNew = false → already existed on Chroma Cloud, respect its current state.
  */
 export async function getSessionCollection(sessionId) {
   if (sessionCollections.has(sessionId)) {
@@ -77,7 +79,7 @@ export async function getSessionCollection(sessionId) {
       embeddingFunction: null
     });
     isNew = false;
-    console.log(`♻️  Session collection exists, reusing: ${collectionName}`);
+    console.log(`\u267b\ufe0f  Session collection exists, reusing: ${collectionName}`);
   } catch {
     collection = await client.createCollection({
       name: collectionName,
@@ -89,7 +91,7 @@ export async function getSessionCollection(sessionId) {
       embeddingFunction: null
     });
     isNew = true;
-    console.log(`✅ Session collection created: ${collectionName}`);
+    console.log(`\u2705 Session collection created: ${collectionName}`);
   }
 
   sessionCollections.set(sessionId, collection);
@@ -102,7 +104,7 @@ export async function deleteSessionCollection(sessionId) {
     const client = getCloudClient();
     await client.deleteCollection({ name: collectionName });
     sessionCollections.delete(sessionId);
-    console.log(`✅ Session collection deleted: ${collectionName}`);
+    console.log(`\u2705 Session collection deleted: ${collectionName}`);
     return true;
   } catch (error) {
     console.error(`Failed to delete session collection ${collectionName}:`, error);
@@ -110,14 +112,25 @@ export async function deleteSessionCollection(sessionId) {
   }
 }
 
+/**
+ * Add vectors in batches of BATCH_SIZE to avoid Chroma payload limits.
+ */
 export async function addVectors(collection, vectors, embeddings, ids) {
   try {
-    await collection.add({
-      ids,
-      embeddings,
-      documents: vectors.map(v => v.text),
-      metadatas: vectors.map(v => v.metadata)
-    });
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batchIds        = ids.slice(i, i + BATCH_SIZE);
+      const batchEmbeddings = embeddings.slice(i, i + BATCH_SIZE);
+      const batchDocuments  = vectors.slice(i, i + BATCH_SIZE).map(v => v.text);
+      const batchMetadatas  = vectors.slice(i, i + BATCH_SIZE).map(v => v.metadata);
+
+      await collection.add({
+        ids:        batchIds,
+        embeddings: batchEmbeddings,
+        documents:  batchDocuments,
+        metadatas:  batchMetadatas
+      });
+      console.log(`  [addVectors] batch ${Math.floor(i / BATCH_SIZE) + 1}: added ${batchIds.length} vectors`);
+    }
     return true;
   } catch (error) {
     console.error('Failed to add vectors:', error);
@@ -150,16 +163,35 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
   }
 }
 
+/**
+ * Delete all vectors for a given documentId.
+ * Paginates collection.get() in BATCH_SIZE chunks so documents with
+ * many chunks (> default 100 limit) are fully deleted.
+ */
 export async function deleteDocumentVectors(collection, documentId) {
   try {
-    const existing = await collection.get({
-      where: { document_id: documentId }
-    });
-    if (existing.ids && existing.ids.length > 0) {
-      await collection.delete({ ids: existing.ids });
-      return existing.ids.length;
+    const allIds = [];
+    let offset = 0;
+
+    while (true) {
+      const batch = await collection.get({
+        where: { document_id: documentId },
+        include: [],
+        limit: BATCH_SIZE,
+        offset
+      });
+
+      if (!batch.ids || batch.ids.length === 0) break;
+      allIds.push(...batch.ids);
+
+      if (batch.ids.length < BATCH_SIZE) break;
+      offset += BATCH_SIZE;
     }
-    return 0;
+
+    if (allIds.length > 0) {
+      await collection.delete({ ids: allIds });
+    }
+    return allIds.length;
   } catch (error) {
     console.error('Failed to delete document vectors:', error);
     throw error;
@@ -175,28 +207,38 @@ export async function getDocumentCount(collection) {
   }
 }
 
+/**
+ * List all unique documents in a collection.
+ * Paginates collection.get() with BATCH_SIZE=300 so collections larger
+ * than Chroma's default get() limit (100) are fully enumerated.
+ */
 export async function listDocuments(collection) {
   try {
-    const allItems = await collection.get({
-      include: ['metadatas', 'documents']
-    });
-
     const documentsMap = new Map();
+    let offset = 0;
 
-    if (allItems.ids) {
-      allItems.ids.forEach((id, idx) => {
-        const meta = allItems.metadatas[idx];
+    while (true) {
+      const batch = await collection.get({
+        include: ['metadatas', 'documents'],
+        limit: BATCH_SIZE,
+        offset
+      });
+
+      if (!batch.ids || batch.ids.length === 0) break;
+
+      batch.ids.forEach((id, idx) => {
+        const meta  = batch.metadatas[idx];
         const docId = meta.document_id;
 
         if (!documentsMap.has(docId)) {
           documentsMap.set(docId, {
-            document_id: docId,
-            filename: meta.filename,
-            chunk_count: 0,
-            page_count: meta.page_number || 1,
+            document_id:      docId,
+            filename:         meta.filename,
+            chunk_count:      0,
+            page_count:       meta.page_number || 1,
             upload_timestamp: meta.upload_timestamp,
-            source_type: meta.source_type,
-            first_chunk_text: allItems.documents[idx]
+            source_type:      meta.source_type,
+            first_chunk_text: batch.documents[idx]
           });
         }
 
@@ -204,6 +246,11 @@ export async function listDocuments(collection) {
         doc.chunk_count++;
         doc.page_count = Math.max(doc.page_count, meta.page_number || 1);
       });
+
+      console.log(`  [listDocuments] offset=${offset}, got=${batch.ids.length}, unique so far=${documentsMap.size}`);
+
+      if (batch.ids.length < BATCH_SIZE) break;
+      offset += BATCH_SIZE;
     }
 
     return Array.from(documentsMap.values());
@@ -241,26 +288,26 @@ export async function cleanupSessionCollections() {
       .filter(name => name.startsWith('session_'));
 
     if (sessionCollectionNames.length === 0) {
-      console.log('✅ No stale session collections found.');
+      console.log('\u2705 No stale session collections found.');
       return;
     }
 
-    console.log(`🧹 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
+    console.log(`\ud83e\uddf9 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
 
     await Promise.allSettled(
       sessionCollectionNames.map(async name => {
         try {
           await client.deleteCollection({ name });
-          console.log(`  ✅ Deleted: ${name}`);
+          console.log(`  \u2705 Deleted: ${name}`);
         } catch (err) {
-          console.warn(`  ⚠️ Could not delete ${name}:`, err.message);
+          console.warn(`  \u26a0\ufe0f Could not delete ${name}:`, err.message);
         }
       })
     );
 
     sessionCollections.clear();
-    console.log('✅ Session collection cleanup complete.');
+    console.log('\u2705 Session collection cleanup complete.');
   } catch (error) {
-    console.warn('⚠️ Session cleanup failed (non-fatal):', error.message);
+    console.warn('\u26a0\ufe0f Session cleanup failed (non-fatal):', error.message);
   }
 }
