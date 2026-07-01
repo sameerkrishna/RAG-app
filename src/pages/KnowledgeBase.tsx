@@ -50,21 +50,20 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     resetUploadState
   } = useDocuments(sessionId);
 
-  const [dragOver, setDragOver]         = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileError, setFileError]       = useState<string | null>(null);
+  const [dragOver, setDragOver]           = useState(false);
+  const [selectedFile, setSelectedFile]   = useState<File | null>(null);
+  const [fileError, setFileError]         = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget]   = useState<Document | null>(null);
 
   const sessionUploads   = documents.filter(d => d.source_type === 'session_upload');
   const uploadedCount    = sessionUploads.length;
   const remainingUploads = Math.max(0, MAX_PDFS - uploadedCount);
   const atLimit          = uploadedCount >= MAX_PDFS;
 
-  // All docs visible in the KB — session uploads + global/seed docs
   const allDocuments = [...documents, ...globalDocuments];
 
   const handleFileSelect = (file: File) => {
     setFileError(null);
-
     if (file.type !== 'application/pdf') {
       setFileError('Only PDF files are supported.');
       return;
@@ -73,7 +72,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       setFileError(`File exceeds the ${MAX_UPLOAD_SIZE_MB} MB size limit.`);
       return;
     }
-    // Check duplicate against ALL indexed docs (session + seed)
     const duplicate = allDocuments.some(
       d => d.filename.toLowerCase() === file.name.toLowerCase()
     );
@@ -81,7 +79,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       setFileError(`"${file.name}" is already indexed in this session.`);
       return;
     }
-
     setSelectedFile(file);
   };
 
@@ -104,14 +101,15 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     e.target.value = '';
   };
 
-  const handleDelete = async (doc: Document) => {
-    if (doc.source_type === 'seed') {
-      alert('Seed documents cannot be deleted.');
-      return;
-    }
-    if (confirm(`Delete "${doc.filename}"?`)) {
-      await deleteDocument(doc.document_id);
-    }
+  const handleDelete = (doc: Document) => {
+    if (doc.source_type === 'seed') return;
+    setDeleteTarget(doc);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    await deleteDocument(deleteTarget.document_id);
+    setDeleteTarget(null);
   };
 
   const isUploading = uploadState.status === 'uploading';
@@ -158,8 +156,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
           {/* Upload Section */}
           {!atLimit && (
             <section className="rounded-xl border bg-card p-6 space-y-4">
-
-              {/* Upload counter */}
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Files className="h-4 w-4" />
@@ -174,7 +170,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </span>
               </div>
 
-              {/* Drop zone */}
               <div
                 className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
                   dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/20'
@@ -198,7 +193,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </p>
               </div>
 
-              {/* File validation error */}
               {fileError && (
                 <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -212,7 +206,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Selected file row */}
               {selectedFile && (
                 <div className="rounded-lg bg-secondary/50 p-4">
                   <div className="flex items-center justify-between">
@@ -233,7 +226,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Progress bars */}
               {isActive && (
                 <div className="space-y-3 px-1">
                   <ProgressBar
@@ -267,7 +259,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Server-side upload error */}
               {uploadState.status === 'error' && (
                 <div className="flex items-center gap-2 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4" />
@@ -278,7 +269,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
             </section>
           )}
 
-          {/* At-limit banner */}
           {atLimit && (
             <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-800 dark:bg-amber-950/30">
               <AlertCircle className="h-5 w-5 flex-shrink-0 text-amber-500" />
@@ -360,6 +350,43 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
           )}
         </div>
       </main>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-sm rounded-xl border bg-card p-6 shadow-lg space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold">Delete document?</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">"{deleteTarget.filename}"</span> will be permanently removed from your session.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={confirmDelete}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
