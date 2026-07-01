@@ -50,8 +50,6 @@ export function deleteConversation(id: string) {
 }
 
 function getInitialConversationState(): { messages: ChatMessage[]; activeConvId: string | null } {
-  // Do NOT consume the flag here — StrictMode mounts twice, flag must survive both mounts.
-  // Flag is only reset explicitly via resetNavigationFlag() when user starts a new conversation.
   if (!_isNavigationBack) {
     return { messages: [], activeConvId: null };
   }
@@ -199,7 +197,16 @@ export function useChat(sessionId: string) {
                 setMessages(prev => {
                   const next = prev.map(m =>
                     m.id === assistantMessageId
-                      ? { ...m, content: payload.response || accumulatedText, citations, coverage, sources, isRefusal, isStreaming: false }
+                      ? {
+                          ...m,
+                          content:    payload.response || accumulatedText,
+                          answerKey:  payload.answerKey ?? undefined,  // ← Supabase UUID for feedback
+                          citations,
+                          coverage,
+                          sources,
+                          isRefusal,
+                          isStreaming: false
+                        }
                       : m
                   );
                   persist(next, convId);
