@@ -25,7 +25,7 @@ function ProgressBar({
           {label}
         </span>
         <span className="tabular-nums text-muted-foreground">
-          {done ? '100%' : active ? `${Math.round(progress)}%` : '\u2014'}
+          {done ? '100%' : active ? `${Math.round(progress)}%` : '—'}
         </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
@@ -133,7 +133,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   const phase2Label = (() => {
     if (uploadState.status === 'indexing')
-      return `Chunking & indexing \u2014 set ${uploadState.setIndex}/${uploadState.totalSets} (${uploadState.processedChunks}/${uploadState.totalChunks} chunks)`;
+      return `Chunking & indexing — set ${uploadState.setIndex}/${uploadState.totalSets} (${uploadState.processedChunks}/${uploadState.totalChunks} chunks)`;
     if (isComplete) return 'Indexing complete';
     return 'Chunking & indexing';
   })();
@@ -194,7 +194,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                   </span>
                 </label>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  PDF only \u00b7 Max {MAX_UPLOAD_SIZE_MB} MB \u00b7 {MAX_PDFS} files per session
+                  PDF only · Max {MAX_UPLOAD_SIZE_MB} MB · {MAX_PDFS} files per session
                 </p>
               </div>
 
@@ -285,7 +285,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
               <div className="text-sm">
                 <span className="font-medium text-amber-700 dark:text-amber-400">Upload limit reached</span>
                 <span className="ml-1 text-amber-600 dark:text-amber-500">
-                  \u2014 {MAX_PDFS}/{MAX_PDFS} files used. Delete an existing upload to add more.
+                  — {MAX_PDFS}/{MAX_PDFS} files used. Delete an existing upload to add more.
                 </span>
               </div>
               <div className="ml-auto flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
