@@ -86,8 +86,12 @@ export async function* streamResponse(prompt) {
   const maxRetries = 2;
 
   while (retries < maxRetries) {
+    let firstTokenTimeout = null;
+    let requestTimeoutId = null;
+    const controller = new AbortController();
+
     try {
-      const controller = new AbortController();
+      requestTimeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
       const result = await getGenAI().models.generateContentStream({
         model: modelName,
@@ -101,13 +105,16 @@ export async function* streamResponse(prompt) {
         signal: controller.signal
       });
 
+      if (!result?.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
+        throw new Error(`Streaming unavailable for model ${modelName}`);
+      }
+
       let firstToken = true;
-      const firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
+      firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
 
       for await (const chunk of result.stream) {
         if (controller.signal.aborted) {
-          clearTimeout(firstTokenTimeout);
-          throw new Error('First token timeout — no response from model');
+          throw new Error('Stream execution aborted by timeout constraint.');
         }
 
         const text = getTextFromChunk(chunk);
@@ -121,9 +128,15 @@ export async function* streamResponse(prompt) {
       }
 
       clearTimeout(firstTokenTimeout);
+      clearTimeout(requestTimeoutId);
       return { success: true };
+
     } catch (error) {
       retries++;
+
+      if (firstTokenTimeout) clearTimeout(firstTokenTimeout);
+      if (requestTimeoutId) clearTimeout(requestTimeoutId);
+
       console.error(`Model attempt ${retries} failed:`, error.message);
 
       if (retries >= maxRetries) {
@@ -140,7 +153,7 @@ export async function* streamChatResponse(query, retrievedResults, sessionId, me
   const memoryContext = memoryService ? memoryService.formatMemoryForPrompt(sessionId) : '';
   const contextList = retrievedResults || [];
   const contextText = contextList.map((r, i) =>
-    `[${i + 1}] ${r.metadata.filename || 'Unknown'}: ${r.text}`
+    `[${i + 1}] ${r.metadata?.filename || 'Unknown'}: ${r.text}`
   ).join('\n\n');
 
   const prompt = buildPrompt({
