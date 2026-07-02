@@ -1,264 +1,443 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useDocuments } from '../hooks/useDocuments';
-import type { UploadState } from '../types';
+import { Upload, FileIcon, Trash2, AlertCircle, Loader2, CheckCircle, ArrowLeft, X } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { formatBytes, formatTimestamp } from '../lib/utils';
+import type { Document } from '../types';
+import { useSeeding } from '../context/SeedingContext';
 
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
+interface KnowledgeBaseProps {
+  sessionId: string;
 }
 
-function ProgressBar({
-  colorClass,
-  progress,
-  indeterminate = false,
-}: {
-  colorClass: string;
-  progress: number;
-  indeterminate?: boolean;
-}) {
+const MAX_UPLOAD_SIZE_MB = 5;
+const MAX_PDFS = 3;
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+function DocumentSkeleton() {
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-      {indeterminate ? (
-        <div
-          className={cx(
-            'h-full w-1/3 rounded-full animate-[pulse_1.2s_ease-in-out_infinite]',
-            colorClass
-          )}
-        />
-      ) : (
-        <div
-          className={cx('h-full rounded-full transition-all duration-200', colorClass)}
-          style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
-        />
-      )}
+    <div className="space-y-2 animate-pulse">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="flex items-start gap-3 rounded-xl border bg-card p-4">
+          <div className="mt-0.5 h-5 w-5 rounded bg-muted" />
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-2/5 rounded bg-muted" />
+            <div className="h-3 w-1/3 rounded bg-muted" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
-function renderProgressBars(uploadState: UploadState) {
-  if (uploadState.status === 'idle') return null;
-  if (uploadState.status === 'error') return null;
-  if (uploadState.status === 'done') return null;
+// ── Custom delete confirmation modal ─────────────────────────────────────────
+interface DeleteModalProps {
+  doc: Document;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}
 
-  const showUploadBar =
-    uploadState.status === 'uploading' ||
-    uploadState.status === 'upload_complete' ||
-    uploadState.status === 'indexing';
+function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
+  const [deleting, setDeleting] = useState(false);
 
-  const showIndexingBar =
-    uploadState.status === 'upload_complete' || uploadState.status === 'indexing';
-
-  const uploadProgress =
-    'uploadProgress' in uploadState && typeof uploadState.uploadProgress === 'number'
-      ? uploadState.uploadProgress
-      : 0;
-
-  const uploadLengthComputable =
-    uploadState.status === 'uploading'
-      ? uploadState.uploadLengthComputable !== false
-      : true;
-
-  const indexingProgress =
-    uploadState.status === 'indexing' ? uploadState.indexingProgress : 0;
-
-  const processedChunks = uploadState.status === 'indexing' ? uploadState.processedChunks : 0;
-  const totalChunks =
-    uploadState.status === 'indexing'
-      ? uploadState.totalChunks
-      : uploadState.status === 'upload_complete'
-        ? uploadState.totalChunks
-        : 0;
+  const handleConfirm = async () => {
+    setDeleting(true);
+    await onConfirm();
+    // parent sets confirmDoc(null) after onConfirm resolves → modal unmounts
+  };
 
   return (
-    <div className="mt-4 space-y-3 rounded-xl border border-border bg-card p-4">
-      {showUploadBar && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium text-foreground">Uploading file...</span>
-            <span className="text-muted-foreground">
-              {uploadLengthComputable ? `${uploadProgress}%` : 'Uploading...'}
-            </span>
-          </div>
-          <ProgressBar
-            colorClass="bg-green-500"
-            progress={uploadProgress}
-            indeterminate={!uploadLengthComputable && uploadState.status === 'uploading'}
-          />
-        </div>
-      )}
+    // Backdrop — click to dismiss (disabled while deleting)
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={deleting ? undefined : onCancel}
+    >
+      {/* Panel */}
+      <div
+        className="relative mx-4 w-full max-w-sm rounded-2xl border bg-card p-6 shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Close button */}
+        {!deleting && (
+          <button
+            onClick={onCancel}
+            className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
 
-      {showIndexingBar && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium text-foreground">Chunking and Embedding...</span>
-            <span className="text-muted-foreground">
-              {uploadState.status === 'indexing'
-                ? `${indexingProgress}% · ${processedChunks} / ${totalChunks} chunks`
-                : `0% · 0 / ${totalChunks} chunks`}
-            </span>
-          </div>
-          <ProgressBar colorClass="bg-primary" progress={indexingProgress} />
+        {/* Icon */}
+        <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
+          <Trash2 className="h-5 w-5 text-destructive" />
         </div>
-      )}
+
+        <h2 className="mb-1 text-base font-semibold">Delete document?</h2>
+        <p className="mb-6 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">&ldquo;{doc.filename}&rdquo;</span>{' '}
+          will be permanently removed from your knowledge base. This cannot be undone.
+        </p>
+
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onCancel}
+            disabled={deleting}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="min-w-[90px] bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={handleConfirm}
+            disabled={deleting}
+          >
+            {deleting ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Deleting...
+              </span>
+            ) : 'Delete'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
 
-export default function KnowledgeBase() {
+// ── Main component ────────────────────────────────────────────────────────────
+export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const {
     documents,
-    isFetching,
+    globalDocuments,
     uploadState,
-    fetchDocuments,
     uploadDocument,
     deleteDocument,
-    resetUploadState,
-  } = useDocuments();
+    resetUploadState
+  } = useDocuments(sessionId);
 
+  const { isSeeding } = useSeeding();
+  const [dragOver, setDragOver]         = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fileError, setFileError]       = useState<string | null>(null);
+  const [confirmDoc, setConfirmDoc]     = useState<Document | null>(null);
 
-  useEffect(() => {
-    void fetchDocuments();
-  }, [fetchDocuments]);
+  // Live counters — driven directly by documents.length (session uploads only)
+  const sessionUploaded = documents.length;
+  const remaining       = MAX_PDFS - sessionUploaded;
 
-  const sessionFileCount = useMemo(() => documents.length, [documents.length]);
-
-  const handleFileSelection = async (file: File | null) => {
-    if (!file) return;
-
-    setErrorMessage(null);
+  const handleFileSelect = (file: File) => {
+    setFileError(null);
+    if (file.type !== 'application/pdf') {
+      setFileError('Only PDF files are supported.');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
+      setFileError(`File exceeds ${MAX_UPLOAD_SIZE_MB}MB limit.`);
+      return;
+    }
     setSelectedFile(file);
+  };
 
-    try {
-      await uploadDocument(file);
-      setSelectedFile(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Upload failed');
+  const handleUpload = async () => {
+    if (!selectedFile) return;
+    const result = await uploadDocument(selectedFile);
+    if (result) setSelectedFile(null);
+  };
+
+  const handleDragOver  = (e: React.DragEvent) => { e.preventDefault(); setDragOver(true); };
+  const handleDragLeave = () => setDragOver(false);
+  const handleDrop      = (e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  };
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileSelect(file);
+  };
+
+  // Called by DeleteModal after the user confirms
+  const handleDeleteConfirmed = async () => {
+    if (!confirmDoc) return;
+    await deleteDocument(confirmDoc.document_id, confirmDoc.filename);
+    setConfirmDoc(null); // closes modal
+  };
+
+  // ── Upload progress renderer ──────────────────────────────────────────────
+  const renderUploadState = () => {
+    switch (uploadState.status) {
+
+      // Green bar: 0 → 100% while bytes are being sent
+      case 'uploading': {
+        const pct = uploadState.uploadProgress;
+        return (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Uploading file...</span>
+              <span>{pct}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-2 rounded-full bg-green-500 transition-all duration-200"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      case 'upload_complete':
+        return (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            File received — starting embedding...
+          </div>
+        );
+
+      // Blue bar: chunks processed
+      case 'indexing': {
+        const processed = uploadState.processedChunks;
+        const total     = uploadState.totalChunks;
+        const pct       = uploadState.indexingProgress;
+        return (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Chunking and Embedding...</span>
+              <span>{processed} / {total} chunks — {pct}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-2 rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      case 'complete':
+        return (
+          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+            <CheckCircle className="h-4 w-4" />
+            Upload complete!
+          </div>
+        );
+
+      case 'error':
+        return (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            {uploadState.error}
+            <Button variant="outline" size="sm" onClick={resetUploadState}>Retry</Button>
+          </div>
+        );
+
+      default:
+        return null;
     }
   };
 
-  const onInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    await handleFileSelection(file);
-    event.target.value = '';
-  };
+  const allDocuments = [...documents, ...globalDocuments];
 
-  const onDrop = async (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDragging(false);
+  // ── Document list ─────────────────────────────────────────────────────────
+  const renderDocuments = () => {
+    if (isSeeding && allDocuments.length === 0) {
+      return (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Indexed Documents</h2>
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading knowledge base...
+            </span>
+          </div>
+          <DocumentSkeleton />
+        </section>
+      );
+    }
 
-    const file = event.dataTransfer.files?.[0] ?? null;
-    await handleFileSelection(file);
+    if (allDocuments.length === 0) {
+      return (
+        <div className="rounded-xl border bg-card py-16 text-center">
+          <Upload className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
+          <h3 className="mb-2 text-lg font-medium">Empty Knowledge Base</h3>
+          <p className="mb-4 text-sm text-muted-foreground">Upload PDF documents to start asking questions</p>
+          <p className="text-xs text-muted-foreground">Or add seed documents to the seed_documents/ folder</p>
+        </div>
+      );
+    }
+
+    return (
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Indexed Documents</h2>
+        <div className="grid gap-2">
+          {allDocuments.map(doc => (
+            <div
+              key={doc.document_id}
+              className="flex items-start justify-between rounded-xl border bg-card p-4 transition-colors hover:bg-accent/30"
+            >
+              <div className="flex items-start gap-3">
+                <FileIcon className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                <div>
+                  <h3 className="text-sm font-medium">{doc.filename}</h3>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>{doc.chunk_count} chunks</span>
+                    <span>{doc.page_count} pages</span>
+                    {doc.source_type === 'seed' && (
+                      <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">Seed</span>
+                    )}
+                    {doc.upload_timestamp && (
+                      <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {doc.source_type !== 'seed' && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setConfirmDoc(doc)}
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+    );
   };
 
   return (
-    <div className="space-y-6">
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={onDrop}
-        className={cx(
-          'rounded-2xl border-2 border-dashed p-6 transition-colors',
-          isDragging ? 'border-primary bg-primary/5' : 'border-border bg-card'
-        )}
-      >
-        <div className="space-y-3 text-center">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Upload PDF</h2>
-            <p className="text-sm text-muted-foreground">
-              Drag and drop a PDF here, or choose a file to add it to the knowledge base.
-            </p>
-          </div>
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
 
-          <div className="flex justify-center">
-            <label className="inline-flex cursor-pointer items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-              Choose file
-              <input type="file" accept="application/pdf" className="hidden" onChange={onInputChange} />
-            </label>
-          </div>
+      {/* Delete confirmation modal */}
+      {confirmDoc && (
+        <DeleteModal
+          doc={confirmDoc}
+          onCancel={() => setConfirmDoc(null)}
+          onConfirm={handleDeleteConfirmed}
+        />
+      )}
 
-          {selectedFile && (
-            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
-              Selected: {selectedFile.name}
-            </div>
-          )}
-
-          {renderProgressBars(uploadState)}
-
-          {uploadState.status === 'done' && (
-            <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-              File uploaded and indexed successfully.
-            </div>
-          )}
-
-          {uploadState.status === 'error' && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {uploadState.error}
-            </div>
-          )}
-
-          {errorMessage && uploadState.status !== 'error' && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {errorMessage}
-            </div>
+      {/* Header */}
+      <header className="flex h-14 flex-shrink-0 items-center justify-between border-b bg-background px-6">
+        <div className="flex items-center gap-3">
+          <Link
+            to="/assistant"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <h1 className="text-sm font-semibold">Knowledge Base</h1>
+          {isSeeding && (
+            <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+              Setting up...
+            </span>
           )}
         </div>
-      </div>
+      </header>
 
-      <div className="rounded-2xl border border-border bg-card p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">Session files</h3>
-            <p className="text-sm text-muted-foreground">
-              {sessionFileCount} file{sessionFileCount === 1 ? '' : 's'} in this knowledge base
-            </p>
-          </div>
+      {/* Content */}
+      <main className="flex-1 overflow-y-auto p-6">
+        <div className="mx-auto max-w-3xl space-y-6">
 
-          {uploadState.status !== 'idle' && uploadState.status !== 'uploading' && (
-            <button
-              type="button"
-              onClick={resetUploadState}
-              className="text-sm text-muted-foreground hover:text-foreground"
-            >
-              Clear status
-            </button>
-          )}
-        </div>
+          {/* Upload section */}
+          {documents.length < MAX_PDFS && (
+            <section className="rounded-xl border bg-card p-6">
 
-        {isFetching ? (
-          <div className="text-sm text-muted-foreground">Loading files...</div>
-        ) : documents.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No files uploaded yet.</div>
-        ) : (
-          <div className="space-y-2">
-            {documents.map((doc) => (
-              <div
-                key={doc.id}
-                className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">{doc.filename}</div>
-                  {typeof doc.chunkCount === 'number' && (
-                    <div className="text-xs text-muted-foreground">{doc.chunkCount} chunks</div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void deleteDocument(doc.id)}
-                  className="rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50"
-                >
-                  Delete
-                </button>
+              {/* Live counter row */}
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {sessionUploaded === 0
+                    ? 'No session files uploaded'
+                    : `${sessionUploaded} session file${sessionUploaded !== 1 ? 's' : ''} uploaded`}
+                </span>
+                <span className={`text-xs font-medium ${
+                  remaining === 1
+                    ? 'text-orange-500 dark:text-orange-400'
+                    : 'text-muted-foreground'
+                }`}>
+                  {remaining} more file upload{remaining !== 1 ? 's' : ''} allowed
+                </span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+
+              {/* Drop zone */}
+              <div
+                className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+                  dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/20'
+                }`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <Upload className="mx-auto mb-4 h-8 w-8 text-muted-foreground" />
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Drag and drop a PDF here, or click to browse
+                </p>
+                <input type="file" accept=".pdf" onChange={handleInputChange} className="hidden" id="file-upload" />
+                <label htmlFor="file-upload" className="cursor-pointer">
+                  <span className="inline-flex h-10 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
+                    Browse Files
+                  </span>
+                </label>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Max {MAX_UPLOAD_SIZE_MB}MB, {MAX_PDFS} files per session
+                </p>
+              </div>
+
+              {/* Validation error */}
+              {fileError && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {fileError}
+                  <button onClick={() => setFileError(null)} className="ml-auto">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Selected file row */}
+              {selectedFile && (
+                <div className="mt-4 rounded-lg bg-secondary/50 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileIcon className="h-4 w-4" />
+                      <span className="text-sm">{selectedFile.name}</span>
+                      <span className="text-xs text-muted-foreground">({formatBytes(selectedFile.size)})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" onClick={handleUpload} disabled={uploadState.status !== 'idle'}>Upload</Button>
+                      <Button variant="outline" size="sm" onClick={() => setSelectedFile(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                  <div className="mt-3">{renderUploadState()}</div>
+                </div>
+              )}
+
+              {/* Keep progress visible after file row clears (indexing phase) */}
+              {!selectedFile && uploadState.status !== 'idle' && (
+                <div className="mt-3">{renderUploadState()}</div>
+              )}
+            </section>
+          )}
+
+          {documents.length >= MAX_PDFS && (
+            <div className="flex items-center gap-2 rounded-lg bg-warning/10 p-4 text-warning-foreground">
+              <AlertCircle className="h-4 w-4" />
+              <span className="text-sm">Maximum {MAX_PDFS} PDF uploads reached. Delete existing uploads to add more.</span>
+            </div>
+          )}
+
+          {renderDocuments()}
+        </div>
+      </main>
     </div>
   );
 }
