@@ -117,6 +117,9 @@ export function chunkText(text, options = {}) {
 
     buffer     = buffer ? buffer + '\n\n' + para : para;
     charCursor += para.length + 2;
+
+    // Hard cap guard: flush immediately if a single para alone hits the max
+    if (buffer.length >= maxChars) flush();
   }
 
   // 5. Flush remainder
