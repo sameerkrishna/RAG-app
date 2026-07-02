@@ -100,17 +100,20 @@ export function useDocuments() {
 
           if (type === 'upload_complete' || payload.type === 'upload_complete') {
             const next = payload as Extract<SsePayload, { type: 'upload_complete' }>;
-            setUploadState((prev) => ({
-              status: 'upload_complete',
-              documentId: next.documentId,
-              totalChunks: next.totalChunks,
-              totalSets: next.totalSets,
-              uploadProgress: 100,
-              uploadLengthComputable:
-                'uploadLengthComputable' in prev && typeof prev.uploadLengthComputable === 'boolean'
-                  ? prev.uploadLengthComputable
-                  : true,
-            }));
+            setUploadState((prev) => {
+              const prevAny = prev as any;
+              return {
+                status: 'upload_complete',
+                documentId: next.documentId,
+                totalChunks: next.totalChunks,
+                totalSets: next.totalSets,
+                uploadProgress: 100,
+                uploadLengthComputable:
+                  typeof prevAny.uploadLengthComputable === 'boolean'
+                    ? prevAny.uploadLengthComputable
+                    : true,
+              };
+            });
             return;
           }
 
@@ -121,41 +124,47 @@ export function useDocuments() {
                 ? clampProgress((next.processedChunks / next.totalChunks) * 100)
                 : 0;
 
-            setUploadState((prev) => ({
-              status: 'indexing',
-              processedChunks: next.processedChunks,
-              totalChunks: next.totalChunks,
-              setIndex: next.setIndex,
-              totalSets: next.totalSets,
-              indexingProgress,
-              uploadProgress:
-                'uploadProgress' in prev && typeof prev.uploadProgress === 'number'
-                  ? prev.uploadProgress
-                  : 100,
-              uploadLengthComputable:
-                'uploadLengthComputable' in prev && typeof prev.uploadLengthComputable === 'boolean'
-                  ? prev.uploadLengthComputable
-                  : true,
-              documentId:
-                'documentId' in prev && typeof prev.documentId === 'string'
-                  ? prev.documentId
-                  : next.documentId,
-            }));
+            setUploadState((prev) => {
+              const prevAny = prev as any;
+              return {
+                status: 'indexing',
+                processedChunks: next.processedChunks,
+                totalChunks: next.totalChunks,
+                setIndex: next.setIndex,
+                totalSets: next.totalSets,
+                indexingProgress,
+                uploadProgress:
+                  typeof prevAny.uploadProgress === 'number'
+                    ? prevAny.uploadProgress
+                    : 100,
+                uploadLengthComputable:
+                  typeof prevAny.uploadLengthComputable === 'boolean'
+                    ? prevAny.uploadLengthComputable
+                    : true,
+                documentId:
+                  typeof prevAny.documentId === 'string'
+                    ? prevAny.documentId
+                    : next.documentId,
+              };
+            });
             return;
           }
 
           if (type === 'done' || payload.type === 'done') {
             const next = payload as Extract<SsePayload, { type: 'done' }>;
-            setUploadState((prev) => ({
-              status: 'done',
-              documentId: next.documentId,
-              totalChunks: next.totalChunks,
-              uploadProgress:
-                'uploadProgress' in prev && typeof prev.uploadProgress === 'number'
-                  ? prev.uploadProgress
-                  : 100,
-              indexingProgress: 100,
-            }));
+            setUploadState((prev) => {
+              const prevAny = prev as any;
+              return {
+                status: 'done',
+                documentId: next.documentId,
+                totalChunks: next.totalChunks,
+                uploadProgress:
+                  typeof prevAny.uploadProgress === 'number'
+                    ? prevAny.uploadProgress
+                    : 100,
+                indexingProgress: 100,
+              };
+            });
             void finishSuccess();
             return;
           }

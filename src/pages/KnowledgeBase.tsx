@@ -197,21 +197,16 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
     // ── Active states: uploading | upload_complete | indexing ──────────────
     // Derive green bar values
-    const uploadPct =
-      'uploadProgress' in uploadState && typeof uploadState.uploadProgress === 'number'
-        ? uploadState.uploadProgress
-        : 0;
-    const lengthComputable =
-      'uploadLengthComputable' in uploadState
-        ? uploadState.uploadLengthComputable !== false
-        : true;
+    const stateAny = uploadState as any;
+    const uploadPct = typeof stateAny.uploadProgress === 'number' ? stateAny.uploadProgress : 0;
+    const lengthComputable = stateAny.uploadLengthComputable !== false;
     const uploadFinished = status === 'upload_complete' || status === 'indexing';
 
     // Derive blue bar values
     const isIndexing = status === 'indexing';
-    const processed = isIndexing ? uploadState.processedChunks : 0;
-    const total = isIndexing ? uploadState.totalChunks : 0;
-    const indexPct = isIndexing ? uploadState.indexingProgress : 0;
+    const processed = isIndexing ? stateAny.processedChunks : 0;
+    const total = isIndexing ? stateAny.totalChunks : 0;
+    const indexPct = isIndexing ? stateAny.indexingProgress : 0;
 
     return (
       <div className="space-y-3">
