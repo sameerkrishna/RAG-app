@@ -33,7 +33,7 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
     const model = getEmbeddingModel();
 
     const embeddingPromises = texts.map(async (text) => {
-      const response = await model.embedContent({
+      const response = await ai.models.embedContent({
         model: modelName,
         contents: text,
         config: {
