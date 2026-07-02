@@ -1,27 +1,30 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
-let genAI = null;
+let ai = null;
 let embeddingModel = null;
 
 function getEmbeddingModel() {
   if (!embeddingModel) {
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    embeddingModel = genAI.getGenerativeModel({
-      model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
+    ai = new GoogleGenAI({
+      vertexai: true,
+      project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
     });
+
+    embeddingModel = ai.models;
   }
   return embeddingModel;
 }
 
-const BATCH_SIZE     = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
-const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
+const BATCH_SIZE = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 4;
 const OUTPUT_DIMENSIONS = () => parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS) || 3072;
-const GROUP_WAIT_MS  = 61000;
-const RETRY_WAIT_MS  = 15000;
+const GROUP_WAIT_MS = 61000;
+const RETRY_WAIT_MS = 15000;
 
 // Embed a single batch of texts (up to BATCH_SIZE).
-// Retries on 429 up to 5 times. Used by both generateEmbeddings and handleUpload.
+// Retries on 429 and transient 502/503 errors up to 5 times.
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const maxAttempts = 5;
   const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
@@ -29,32 +32,60 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   try {
     const model = getEmbeddingModel();
 
-    const result = await model.batchEmbedContents({
-      requests: texts.map(text => ({
-        model: `models/${modelName}`,
-        content: { parts: [{ text }] },
-        taskType,
-        outputDimensionality: OUTPUT_DIMENSIONS()
-      }))
+    const embeddingPromises = texts.map(async (rawText) => {
+      // Coerce safely to string to prevent API input validation failures
+      const text = typeof rawText === 'string' ? rawText : String(rawText);
+
+      if (!text || text.trim() === '') {
+        throw new EmbeddingError('Cannot embed an empty or missing text block');
+      }
+
+      const response = await model.embedContent({
+        model: modelName,
+        contents: text,
+        config: {
+          taskType,
+          outputDimensionality: OUTPUT_DIMENSIONS()
+        }
+      });
+
+      // Handle structural variations in the SDK response payload
+      const values = response?.embeddings?.[0]?.values ||
+        response?.embedding?.values ||
+        response?.values;
+
+      if (!values) {
+        console.error('[embedding] Unexpected API response shape:', JSON.stringify(response));
+        throw new EmbeddingError('Missing values in embedding response');
+      }
+
+      return values;
     });
 
-    if (!result?.embeddings || result.embeddings.length !== texts.length) {
-      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${result?.embeddings?.length ?? 0}`);
+    const embeddings = await Promise.all(embeddingPromises);
+
+    if (embeddings.length !== texts.length) {
+      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${embeddings.length}`);
     }
 
-    return result.embeddings.map(e => {
-      if (!e?.values) throw new EmbeddingError('Missing values in embedding response');
-      return e.values;
-    });
+    return embeddings;
 
   } catch (error) {
-    const is429 = is429Error(error) ||
+    // Retry on rate limits (429) as well as temporary gateway/service disruptions (502, 503)
+    const isRetryable = is429Error(error) ||
       error?.status === 429 ||
-      error?.message?.includes('RESOURCE_EXHAUSTED');
+      error?.status === 502 ||
+      error?.status === 503 ||
+      error?.message?.includes('RESOURCE_EXHAUSTED') ||
+      error?.message?.includes('Service Unavailable') ||
+      error?.message?.includes('Bad Gateway');
 
-    if (is429 && attempt < maxAttempts) {
-      const retryDelay = error.retryAfter || GROUP_WAIT_MS;
-      console.log(`[embedding] Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
+    if (isRetryable && attempt < maxAttempts) {
+      // Scale wait dynamically if it's a structural gateway error
+      const baseDelay = error.retryAfter || (attempt * RETRY_WAIT_MS);
+      const retryDelay = error?.status === 429 ? GROUP_WAIT_MS : baseDelay;
+
+      console.log(`[embedding] Transient error (${error?.status || 'unknown'}), waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})...`);
       await new Promise(resolve => setTimeout(resolve, retryDelay));
       return embedBatch(texts, taskType, attempt + 1);
     }
@@ -77,9 +108,9 @@ export async function embedSingleBatchGroup(texts, taskType = 'RETRIEVAL_DOCUMEN
 export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT', onProgress) {
   if (!chunks || chunks.length === 0) return [];
 
-  const batchSize     = BATCH_SIZE();
+  const batchSize = BATCH_SIZE();
   const parallelCalls = PARALLEL_CALLS();
-  const embeddings    = [];
+  const embeddings = [];
 
   const batches = [];
   for (let i = 0; i < chunks.length; i += batchSize) {
@@ -90,8 +121,8 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
 
   for (let i = 0; i < batches.length; i += parallelCalls) {
     const parallelBatches = batches.slice(i, i + parallelCalls);
-    const groupNum        = Math.floor(i / parallelCalls) + 1;
-    const chunksCovered   = Math.min((i + parallelCalls) * batchSize, chunks.length);
+    const groupNum = Math.floor(i / parallelCalls) + 1;
+    const chunksCovered = Math.min((i + parallelCalls) * batchSize, chunks.length);
 
     console.log(`[embedding] Group ${groupNum}/${totalGroups} — ${parallelBatches.length} batch call(s) in parallel (chunks ${i * batchSize + 1}–${chunksCovered})...`);
 
