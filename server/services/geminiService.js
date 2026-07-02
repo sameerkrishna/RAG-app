@@ -9,7 +9,8 @@ function getGenAI() {
     genAI = new GoogleGenAI({
       vertexai: true,
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-      location: 'global'
+      // CRITICAL: Vertex AI requires a valid regional endpoint (e.g., 'us-central1'), NOT 'global'
+      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1' 
     });
   }
   return genAI;
@@ -20,22 +21,12 @@ const FALLBACK_MODEL = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
 const FIRST_TOKEN_TIMEOUT = parseInt(process.env.LLM_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000 || 12000;
 const REQUEST_TIMEOUT = parseInt(process.env.LLM_REQUEST_TIMEOUT_SECONDS) * 1000 || 45000;
 
-function getPrimaryModelName() {
-  return PRIMARY_MODEL;
-}
-
-function getFallbackModelName() {
-  return FALLBACK_MODEL;
-}
+function getPrimaryModelName() { return PRIMARY_MODEL; }
+function getFallbackModelName() { return FALLBACK_MODEL; }
 
 function getTextFromResponse(result) {
-  return result?.text || result?.response?.text?.() || '';
-}
-
-function getTextFromChunk(chunk) {
-  if (typeof chunk?.text === 'string') return chunk.text;
-  if (typeof chunk?.text === 'function') return chunk.text();
-  return '';
+  // SDK returns text via the top-level property
+  return result?.text || '';
 }
 
 export async function generateResponse(prompt) {
@@ -46,14 +37,8 @@ export async function generateResponse(prompt) {
     const result = await getGenAI().models.generateContent({
       model: getPrimaryModelName(),
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.7,
-        topP: 0.95,
-        maxOutputTokens: 2048
-      }
-    }, {
-      signal: controller.signal
-    });
+      config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
+    }, { signal: controller.signal });
 
     clearTimeout(timeoutId);
     return getTextFromResponse(result);
@@ -65,13 +50,8 @@ export async function generateResponse(prompt) {
       const fallbackResult = await getGenAI().models.generateContent({
         model: getFallbackModelName(),
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.7,
-          topP: 0.95,
-          maxOutputTokens: 2048
-        }
+        config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
       });
-
       return getTextFromResponse(fallbackResult);
     } catch (fallbackError) {
       console.error('Fallback model also failed:', fallbackError.message);
@@ -93,31 +73,27 @@ export async function* streamResponse(prompt) {
     try {
       requestTimeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-      const result = await getGenAI().models.generateContentStream({
-        model: "gemini-3.5-flash",
+      // FIX: Use responseStream directly. Passed dynamic modelName instead of hardcoded string.
+      const responseStream = await getGenAI().models.generateContentStream({
+        model: modelName, 
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.7,
-          topP: 0.95,
-          maxOutputTokens: 2048
-        }
-      }, {
-        signal: controller.signal
-      });
+        config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
+      }, { signal: controller.signal });
 
-      if (!result?.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
+      // FIX: The response itself handles Symbol.asyncIterator, not response.stream
+      if (typeof responseStream[Symbol.asyncIterator] !== 'function') {
         throw new Error(`Streaming unavailable for model ${modelName}`);
       }
 
       let firstToken = true;
       firstTokenTimeout = setTimeout(() => controller.abort(), FIRST_TOKEN_TIMEOUT);
 
-      for await (const chunk of result.stream) {
+      for await (const chunk of responseStream) {
         if (controller.signal.aborted) {
           throw new Error('Stream execution aborted by timeout constraint.');
         }
 
-        const text = getTextFromChunk(chunk);
+        const text = chunk.text || '';
         if (text) {
           if (firstToken) {
             firstToken = false;
@@ -129,11 +105,10 @@ export async function* streamResponse(prompt) {
 
       clearTimeout(firstTokenTimeout);
       clearTimeout(requestTimeoutId);
-      return { success: true };
+      return; 
 
     } catch (error) {
       retries++;
-
       if (firstTokenTimeout) clearTimeout(firstTokenTimeout);
       if (requestTimeoutId) clearTimeout(requestTimeoutId);
 
@@ -175,7 +150,6 @@ export async function* streamChatResponse(query, retrievedResults, sessionId, me
         return;
       }
     }
-
     yield { type: 'complete', response: fullResponse };
   } catch (error) {
     yield { type: 'error', error: error.message };
@@ -187,6 +161,7 @@ export function getRefusalText() {
 }
 
 export async function generateWebSearchResponse(query, groundingContent) {
+  // FIX: In @google/genai, Google Search Grounding is declared under tools using the object syntax
   const result = await getGenAI().models.generateContent({
     model: getPrimaryModelName(),
     contents: [{
@@ -197,16 +172,13 @@ export async function generateWebSearchResponse(query, groundingContent) {
       temperature: 0.7,
       topP: 0.95,
       maxOutputTokens: 2048,
-      tools: [{ googleSearch: {} }]
+      tools: [{ googleSearch: {} }] 
     }
   });
 
-  const text = getTextFromResponse(result);
-  const groundingMetadata = result?.candidates?.[0]?.groundingMetadata;
-
   return {
-    text,
-    groundingMetadata,
-    groundingChunks: groundingMetadata?.groundingChunks || []
+    text: result.text || '',
+    groundingMetadata: result.candidates?.[0]?.groundingMetadata || null,
+    groundingChunks: result.candidates?.[0]?.groundingMetadata?.groundingChunks || []
   };
 }
