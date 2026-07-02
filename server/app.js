@@ -9,7 +9,6 @@ import healthRouter from './api/health.js';
 import documentsRouter from './api/documents.js';
 import chatRouter from './api/chat.js';
 import feedbackRouter from './api/feedback.js';
-import searchRouter from './api/search.js';
 import { getOrCreateSession, initSessionWithGlobalDocs } from './services/sessionService.js';
 import { addTurnWithCitations, clearMemory } from './services/memoryService.js';
 
@@ -104,7 +103,6 @@ app.use('/health', healthRouter);
 app.use('/documents', documentsRouter);
 app.use('/chat', chatRouter);
 app.use('/feedback', feedbackRouter);
-app.use('/search', searchRouter);
 
 console.log('✅ Routers mounted');
 

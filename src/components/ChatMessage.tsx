@@ -1,5 +1,5 @@
 import ReactMarkdown from 'react-markdown';
-import { Copy, ThumbsUp, ThumbsDown, Search, FileText, AlertCircle, RefreshCw } from 'lucide-react';
+import { Copy, ThumbsUp, ThumbsDown, FileText, AlertCircle, RefreshCw } from 'lucide-react';
 import type { ChatMessage as ChatMessageType } from '../types';
 import { cn } from '../lib/utils';
 import { useState } from 'react';
@@ -8,11 +8,10 @@ import { Button } from './ui/Button';
 interface ChatMessageProps {
   message: ChatMessageType;
   onShowSources: () => void;
-  onWebSearch: () => void;
   onRetry: () => void;
 }
 
-export default function ChatMessage({ message, onShowSources, onWebSearch, onRetry }: ChatMessageProps) {
+export default function ChatMessage({ message, onShowSources, onRetry }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState<'positive' | 'negative' | null>(null);
 
@@ -144,26 +143,15 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
             )}
 
             {message.isRefusal && (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onWebSearch}
-                  className="h-8 gap-1 text-xs"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  Search Web
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onRetry}
-                  className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Retry
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRetry}
+                className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
             )}
           </div>
         )}

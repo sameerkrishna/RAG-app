@@ -177,25 +177,3 @@ export async function* streamChatResponse(query, retrievedResults, sessionId, me
 export function getRefusalText() {
   return getRefusalResponse();
 }
-
-export async function generateWebSearchResponse(query, groundingContent) {
-  const result = await getGenAI().models.generateContent({
-    model: getPrimaryModelName(),
-    contents: [{
-      role: 'user',
-      parts: [{ text: `Based on these web search results, answer the question: "${query}"\n\n${groundingContent}` }]
-    }],
-    config: {
-      temperature: 0.7,
-      topP: 0.95,
-      maxOutputTokens: 2048,
-      tools: [{ googleSearch: {} }]
-    }
-  });
-
-  return {
-    text: getTextFromResponse(result),
-    groundingMetadata: result?.candidates?.[0]?.groundingMetadata || null,
-    groundingChunks: result?.candidates?.[0]?.groundingMetadata?.groundingChunks || []
-  };
-}

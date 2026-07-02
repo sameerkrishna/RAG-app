@@ -66,8 +66,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   useEffect(() => {
     if (initedSessions.has(sessionId)) {
-      // Remount (e.g. navigated back from KB) — skip fetch, give sendMessage
-      // a resolved promise so it never blocks on null.
       console.log('[session] Already inited, skipping fetch');
       sessionInitRef.current = Promise.resolve();
       return;
@@ -124,22 +122,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
     setSelectedSources(sources);
     setSelectedCitations(citations);
     setSourceDrawerOpen(true);
-  };
-
-  const handleWebSearch = async (lastQuery: string) => {
-    try {
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId },
-        body: JSON.stringify({ query: lastQuery })
-      });
-      const data = await response.json();
-      if (data.success && data.answer) {
-        window.dispatchEvent(new CustomEvent('websearch-result', { detail: { answer: data.answer, sources: data.sources } }));
-      }
-    } catch (err) {
-      console.error('Web search error:', err);
-    }
   };
 
   const getLastUserQuery = (): string => {
@@ -303,7 +285,6 @@ export default function Assistant({ sessionId }: AssistantProps) {
                       key={msg.id}
                       message={msg}
                       onShowSources={() => msg.sources && handleShowSources(msg.sources, msg.citations || [])}
-                      onWebSearch={() => handleWebSearch(getLastUserQuery())}
                       onRetry={() => getLastUserQuery() && sendMessage(getLastUserQuery())}
                     />
                   ))}
