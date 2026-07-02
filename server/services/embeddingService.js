@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { VertexAI } from '@google-cloud/vertexai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
 let genAI = null;
