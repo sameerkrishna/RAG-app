@@ -1,10 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import type {
-  DocumentRecord,
-  DocumentsResponse,
-  UploadProgressSnapshot,
-  UploadState,
-} from '../types';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Document, UploadState } from '../types';
 
 type UploadOptions = {
   onSuccess?: () => void;
@@ -48,30 +43,68 @@ function tryParseJson<T>(value: string): T | null {
   }
 }
 
-export function useDocuments() {
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+function normalizeDocuments(payload: unknown): Document[] {
+  if (Array.isArray(payload)) return payload as Document[];
+
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'documents' in payload &&
+    Array.isArray((payload as { documents?: unknown }).documents)
+  ) {
+    return (payload as { documents: Document[] }).documents;
+  }
+
+  return [];
+}
+
+export function useDocuments(sessionId: string) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
   const [isFetching, setIsFetching] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
     setIsFetching(true);
+
     try {
-      const response = await fetch('/api/documents');
-      if (!response.ok) throw new Error('Failed to fetch documents');
-      const data = (await response.json()) as DocumentsResponse;
-      setDocuments(data.documents ?? []);
+      const [sessionResponse, globalResponse] = await Promise.all([
+        fetch(`/api/sessions/${sessionId}/documents`),
+        fetch('/api/documents'),
+      ]);
+
+      if (!sessionResponse.ok) {
+        throw new Error(`Failed to fetch session documents: ${sessionResponse.status}`);
+      }
+
+      if (!globalResponse.ok) {
+        throw new Error(`Failed to fetch global documents: ${globalResponse.status}`);
+      }
+
+      const sessionJson = await sessionResponse.json();
+      const globalJson = await globalResponse.json();
+
+      setDocuments(normalizeDocuments(sessionJson));
+      setGlobalDocuments(normalizeDocuments(globalJson));
     } catch (error) {
       console.error('Failed to fetch documents:', error);
+      setDocuments([]);
+      setGlobalDocuments([]);
     } finally {
       setIsFetching(false);
     }
-  }, []);
+  }, [sessionId]);
+
+  useEffect(() => {
+    void fetchDocuments();
+  }, [fetchDocuments]);
 
   const uploadDocument = useCallback(
     (file: File, options?: UploadOptions) =>
-      new Promise<void>((resolve, reject) => {
+      new Promise<boolean>((resolve) => {
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('sessionId', sessionId);
 
         const xhr = new XMLHttpRequest();
         let lastResponseIndex = 0;
@@ -84,14 +117,26 @@ export function useDocuments() {
           settled = true;
           await fetchDocuments();
           options?.onSuccess?.();
-          resolve();
+          resolve(true);
         };
 
         const finishError = (message: string) => {
           if (settled) return;
           settled = true;
-          setUploadState({ status: 'error', error: message });
-          reject(new Error(message));
+          setUploadState((prev) => {
+            const prevAny = prev as {
+              uploadProgress?: number;
+              indexingProgress?: number;
+            };
+
+            return {
+              status: 'error',
+              error: message,
+              uploadProgress: prevAny.uploadProgress,
+              indexingProgress: prevAny.indexingProgress,
+            };
+          });
+          resolve(false);
         };
 
         const parseEvent = (type: string, rawData: string) => {
@@ -100,8 +145,10 @@ export function useDocuments() {
 
           if (type === 'upload_complete' || payload.type === 'upload_complete') {
             const next = payload as Extract<SsePayload, { type: 'upload_complete' }>;
+
             setUploadState((prev) => {
-              const prevAny = prev as any;
+              const prevAny = prev as { uploadLengthComputable?: boolean };
+
               return {
                 status: 'upload_complete',
                 documentId: next.documentId,
@@ -114,6 +161,7 @@ export function useDocuments() {
                     : true,
               };
             });
+
             return;
           }
 
@@ -125,7 +173,12 @@ export function useDocuments() {
                 : 0;
 
             setUploadState((prev) => {
-              const prevAny = prev as any;
+              const prevAny = prev as {
+                uploadProgress?: number;
+                uploadLengthComputable?: boolean;
+                documentId?: string;
+              };
+
               return {
                 status: 'indexing',
                 processedChunks: next.processedChunks,
@@ -147,13 +200,16 @@ export function useDocuments() {
                     : next.documentId,
               };
             });
+
             return;
           }
 
           if (type === 'done' || payload.type === 'done') {
             const next = payload as Extract<SsePayload, { type: 'done' }>;
+
             setUploadState((prev) => {
-              const prevAny = prev as any;
+              const prevAny = prev as { uploadProgress?: number };
+
               return {
                 status: 'done',
                 documentId: next.documentId,
@@ -165,6 +221,7 @@ export function useDocuments() {
                 indexingProgress: 100,
               };
             });
+
             void finishSuccess();
             return;
           }
@@ -180,6 +237,7 @@ export function useDocuments() {
             eventName = 'message';
             return;
           }
+
           parseEvent(eventName, dataLines.join('\n').trim());
           eventName = 'message';
           dataLines = [];
@@ -188,6 +246,7 @@ export function useDocuments() {
         const parseStream = () => {
           const chunk = xhr.responseText.slice(lastResponseIndex);
           if (!chunk) return;
+
           lastResponseIndex = xhr.responseText.length;
 
           const lines = chunk.split(/\r?\n/);
@@ -196,18 +255,30 @@ export function useDocuments() {
               eventName = line.slice(6).trim() || 'message';
               continue;
             }
+
             if (line.startsWith('data:')) {
               dataLines.push(line.slice(5).trimStart());
               continue;
             }
+
             if (line.trim() === '') {
               flushEvent();
             }
           }
         };
 
-        xhr.open('POST', '/api/documents/upload', true);
+        xhr.open('POST', `/api/sessions/${sessionId}/documents/upload`, true);
         xhr.setRequestHeader('Accept', 'text/event-stream');
+
+        xhr.upload.onloadstart = () => {
+          setUploadState({
+            status: 'uploading',
+            uploadProgress: 0,
+            uploadBytesLoaded: 0,
+            uploadBytesTotal: file.size,
+            uploadLengthComputable: file.size > 0,
+          });
+        };
 
         xhr.upload.onprogress = (event) => {
           const uploadProgress =
@@ -218,27 +289,13 @@ export function useDocuments() {
           setUploadState((prev) => {
             if (prev.status === 'indexing' || prev.status === 'done') return prev;
 
-            const snapshot: UploadProgressSnapshot = {
+            return {
+              status: 'uploading',
               uploadProgress,
               uploadBytesLoaded: event.loaded,
               uploadBytesTotal: event.total,
               uploadLengthComputable: event.lengthComputable,
             };
-
-            return {
-              status: 'uploading',
-              ...snapshot,
-            };
-          });
-        };
-
-        xhr.upload.onloadstart = () => {
-          setUploadState({
-            status: 'uploading',
-            uploadProgress: 0,
-            uploadBytesLoaded: 0,
-            uploadBytesTotal: file.size,
-            uploadLengthComputable: file.size > 0,
           });
         };
 
@@ -263,7 +320,9 @@ export function useDocuments() {
             return;
           }
 
-          void finishSuccess();
+          if (!settled) {
+            void finishSuccess();
+          }
         };
 
         xhr.onerror = () => finishError('Network error while uploading document');
@@ -271,14 +330,23 @@ export function useDocuments() {
 
         xhr.send(formData);
       }),
-    [fetchDocuments]
+    [fetchDocuments, sessionId]
   );
 
-  const deleteDocument = useCallback(async (documentId: string) => {
-    const response = await fetch(`/api/documents/${documentId}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error('Failed to delete document');
-    setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
-  }, []);
+  const deleteDocument = useCallback(
+    async (documentId: string, _filename?: string) => {
+      const response = await fetch(`/api/sessions/${sessionId}/documents/${documentId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete document');
+      }
+
+      setDocuments((prev) => prev.filter((doc) => doc.document_id !== documentId));
+    },
+    [sessionId]
+  );
 
   const resetUploadState = useCallback(() => {
     setUploadState({ status: 'idle' });
@@ -287,6 +355,7 @@ export function useDocuments() {
   return useMemo(
     () => ({
       documents,
+      globalDocuments,
       isFetching,
       uploadState,
       fetchDocuments,
@@ -294,6 +363,15 @@ export function useDocuments() {
       deleteDocument,
       resetUploadState,
     }),
-    [documents, isFetching, uploadState, fetchDocuments, uploadDocument, deleteDocument, resetUploadState]
+    [
+      documents,
+      globalDocuments,
+      isFetching,
+      uploadState,
+      fetchDocuments,
+      uploadDocument,
+      deleteDocument,
+      resetUploadState,
+    ]
   );
 }
