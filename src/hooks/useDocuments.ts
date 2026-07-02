@@ -163,13 +163,15 @@ const parseIncrementalResponse = async () => {
   }
 };
       
-      // Phase 1: track real upload bytes sent to server
       xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          setUploadState({ status: 'uploading', uploadProgress: pct } as any);
-        }
-      });
+  if (e.lengthComputable) {
+    const pct = Math.round((e.loaded / e.total) * 100);
+    setUploadState((prev: any) => {
+      if (prev.status === 'indexing' || prev.status === 'complete') return prev;
+      return { status: 'uploading', uploadProgress: pct } as any;
+    });
+  }
+});
 
       xhr.addEventListener('load', async () => {
         if (xhr.status < 200 || xhr.status >= 300) {
