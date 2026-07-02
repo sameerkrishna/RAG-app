@@ -16,7 +16,7 @@ function getGenAI() {
   return genAI;
 }
 
-const PRIMARY_MODEL =  'gemini-3.5-flash';
+const PRIMARY_MODEL =  'gemini-3.1-flash-lite';
 const FALLBACK_MODEL = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
 const FIRST_TOKEN_TIMEOUT = parseInt(process.env.LLM_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000 || 12000;
 const REQUEST_TIMEOUT = parseInt(process.env.LLM_REQUEST_TIMEOUT_SECONDS) * 1000 || 45000;
