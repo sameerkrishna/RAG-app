@@ -8,6 +8,7 @@ import { Send, BookOpen, X, Bot, MessageSquarePlus, ChevronLeft, ChevronRight, S
 import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
+import { useSeeding } from '../context/SeedingContext';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
@@ -30,13 +31,13 @@ function getGreeting(): string {
 export default function Assistant({ sessionId }: AssistantProps) {
   const navigate = useNavigate();
   const { messages, isLoading, isThinking, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
+  const { isSeeding, setIsSeeding } = useSeeding();
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
   const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversations, setConversations] = useState<StoredConversation[]>(() => getAllConversations());
-  const [isSeeding, setIsSeeding] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
