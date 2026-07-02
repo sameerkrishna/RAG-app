@@ -57,12 +57,42 @@ export type UploadState =
   | { status: 'uploading'; uploadProgress: number }                  // phase 1: file bytes being sent (0–100)
   | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
   | {
-      status: 'indexing';
-      processedChunks: number;
-      totalChunks: number;
-      indexingProgress: number;  // 0–100, computed as Math.round(processedChunks/totalChunks*100)
-      setIndex: number;
-      totalSets: number;
+    status: 'uploading';
+    uploadProgress: number;
+    uploadBytesLoaded?: number;
+    uploadBytesTotal?: number;
+    uploadLengthComputable?: boolean;
+  }
+  | {
+    status: 'upload_complete';
+    documentId: string;
+    totalChunks: number;
+    totalSets: number;
+    uploadProgress: number;
+  }
+  | {
+    status: 'indexing';
+    processedChunks: number;
+    totalChunks: number;
+    setIndex: number;
+    totalSets: number;
+    indexingProgress: number;
+    uploadProgress?: number;
+    documentId?: string;
+  }
+  | {
+    status: 'done';
+    documentId: string;
+    totalChunks?: number;
+    uploadProgress?: number;
+    indexingProgress?: number;
+  }
+  | {
+    status: 'error';
+    error: string;
+    uploadProgress?: number;
+    indexingProgress?: number;
+  };
     }                                                                 // phase 2: chunking + embedding
   | { status: 'complete' }
   | { status: 'error'; error: string; code: string };
