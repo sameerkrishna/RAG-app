@@ -230,7 +230,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 style={{ width: `${uploadFinished ? 100 : uploadPct}%` }}
               />
             ) : (
-              /* Indeterminate shimmer when browser can't report byte totals */
               <div className="h-2 rounded-full bg-green-500 progress-indeterminate" />
             )}
           </div>
