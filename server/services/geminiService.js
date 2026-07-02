@@ -9,7 +9,7 @@ function getGenAI() {
     genAI = new GoogleGenAI({
       vertexai: true,
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
+      location: 'global'
     });
   }
   return genAI;
