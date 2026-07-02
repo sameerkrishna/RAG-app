@@ -1,189 +1,282 @@
-import { useState, useCallback, useEffect } from 'react';
-import type { Document, UploadState } from '../types';
+import { useCallback, useMemo, useState } from 'react';
+import type {
+  DocumentRecord,
+  DocumentsResponse,
+  UploadProgressSnapshot,
+  UploadState,
+} from '../types';
 
-export function useDocuments(sessionId: string) {
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
+type UploadOptions = {
+  onSuccess?: () => void;
+};
+
+type SsePayload =
+  | {
+      type: 'upload_complete';
+      documentId: string;
+      totalChunks: number;
+      totalSets: number;
+    }
+  | {
+      type: 'embedding_progress';
+      processedChunks: number;
+      totalChunks: number;
+      setIndex: number;
+      totalSets: number;
+      documentId?: string;
+    }
+  | {
+      type: 'done';
+      documentId: string;
+      totalChunks?: number;
+    }
+  | {
+      type: 'error';
+      error: string;
+    };
+
+function clampProgress(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function tryParseJson<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function useDocuments() {
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
+  const [isFetching, setIsFetching] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
+    setIsFetching(true);
     try {
-      const response = await fetch('/api/documents', {
-        headers: { 'x-session-id': sessionId }
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      console.log('[useDocuments] fetchDocuments — session:', data.sessionDocuments?.length, 'global:', data.globalDocuments?.length);
-      setDocuments(data.sessionDocuments || []);
-      setGlobalDocuments(data.globalDocuments || []);
+      const response = await fetch('/api/documents');
+      if (!response.ok) throw new Error('Failed to fetch documents');
+      const data = (await response.json()) as DocumentsResponse;
+      setDocuments(data.documents ?? []);
     } catch (error) {
-      console.error('[useDocuments] Failed to fetch documents:', error);
+      console.error('Failed to fetch documents:', error);
     } finally {
-      setLoading(false);
+      setIsFetching(false);
     }
-  }, [sessionId]);
+  }, []);
 
-  useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
+  const uploadDocument = useCallback(
+    (file: File, options?: UploadOptions) =>
+      new Promise<void>((resolve, reject) => {
+        const formData = new FormData();
+        formData.append('file', file);
 
-  const uploadDocument = useCallback(async (file: File) => {
-    console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
-    setUploadState({ status: 'uploading', uploadProgress: 0 });
+        const xhr = new XMLHttpRequest();
+        let lastResponseIndex = 0;
+        let eventName = 'message';
+        let dataLines: string[] = [];
+        let settled = false;
 
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sessionId', sessionId);
+        const finishSuccess = async () => {
+          if (settled) return;
+          settled = true;
+          await fetchDocuments();
+          options?.onSuccess?.();
+          resolve();
+        };
 
-    return new Promise<any>((resolve) => {
-      const xhr = new XMLHttpRequest();
+        const finishError = (message: string) => {
+          if (settled) return;
+          settled = true;
+          setUploadState({ status: 'error', error: message });
+          reject(new Error(message));
+        };
 
-      // Phase 1: track real upload bytes sent to server
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          setUploadState({ status: 'uploading', uploadProgress: pct });
-        }
-      });
+        const parseEvent = (type: string, rawData: string) => {
+          const payload = tryParseJson<SsePayload>(rawData);
+          if (!payload) return;
 
-      xhr.addEventListener('load', async () => {
-        if (xhr.status < 200 || xhr.status >= 300) {
-          console.error('[useDocuments] Upload failed:', xhr.status, xhr.responseText);
-          setUploadState({ status: 'error', error: 'Upload failed', code: 'HTTP_ERROR' });
-          resolve(null);
-          return;
-        }
-
-        // Phase 2: parse SSE events from the buffered XHR response
-        // XHR buffers the full SSE text in responseText after the stream ends.
-        console.log('[useDocuments] XHR done — parsing SSE events from responseText');
-        setUploadState({ status: 'uploading', uploadProgress: 100 });
-
-        const lines = xhr.responseText.split('\n');
-        let currentEvent = '';
-        let result: any = null;
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-            continue;
+          if (type === 'upload_complete' || payload.type === 'upload_complete') {
+            const next = payload as Extract<SsePayload, { type: 'upload_complete' }>;
+            setUploadState({
+              status: 'upload_complete',
+              documentId: next.documentId,
+              totalChunks: next.totalChunks,
+              totalSets: next.totalSets,
+              uploadProgress: 100,
+            });
+            return;
           }
 
-          if (line.startsWith('data: ')) {
-            const rawData = line.slice(6);
-            try {
-              const payload = JSON.parse(rawData);
-              console.log(`[useDocuments] SSE event: ${currentEvent}`, payload);
+          if (type === 'embedding_progress' || payload.type === 'embedding_progress') {
+            const next = payload as Extract<SsePayload, { type: 'embedding_progress' }>;
+            const indexingProgress =
+              next.totalChunks > 0
+                ? clampProgress((next.processedChunks / next.totalChunks) * 100)
+                : 0;
 
-              if (currentEvent === 'upload_complete') {
-                setUploadState({
-                  status: 'upload_complete',
-                  documentId: payload.documentId,
-                  totalChunks: payload.totalChunks,
-                  totalSets: payload.totalSets
-                } as any);
+            setUploadState((prev) => ({
+              status: 'indexing',
+              processedChunks: next.processedChunks,
+              totalChunks: next.totalChunks,
+              setIndex: next.setIndex,
+              totalSets: next.totalSets,
+              indexingProgress,
+              uploadProgress:
+                'uploadProgress' in prev && typeof prev.uploadProgress === 'number'
+                  ? prev.uploadProgress
+                  : 100,
+              documentId:
+                'documentId' in prev && typeof prev.documentId === 'string'
+                  ? prev.documentId
+                  : next.documentId,
+            }));
+            return;
+          }
 
-                const newDoc: Document = {
-                  document_id: payload.documentId,
-                  filename: payload.filename,
-                  chunk_count: 0,
-                  page_count: payload.pageCount,
-                  upload_timestamp: new Date().toISOString(),
-                  source_type: 'session_upload',
-                  fileSize: payload.fileSize,
-                  status: 'indexing'
-                };
-                setDocuments(prev => {
-                  const alreadyExists = prev.some(d => d.document_id === payload.documentId);
-                  if (alreadyExists) {
-                    return prev.map(d =>
-                      d.document_id === payload.documentId
-                        ? { ...d, status: 'indexing' as const }
-                        : d
-                    );
-                  }
-                  console.log(`[useDocuments] Doc ${payload.filename} optimistically added as indexing`);
-                  return [newDoc, ...prev];
-                });
+          if (type === 'done' || payload.type === 'done') {
+            const next = payload as Extract<SsePayload, { type: 'done' }>;
+            setUploadState((prev) => ({
+              status: 'done',
+              documentId: next.documentId,
+              totalChunks: next.totalChunks,
+              uploadProgress:
+                'uploadProgress' in prev && typeof prev.uploadProgress === 'number'
+                  ? prev.uploadProgress
+                  : 100,
+              indexingProgress: 100,
+            }));
+            void finishSuccess();
+            return;
+          }
 
-              } else if (currentEvent === 'embedding_progress') {
-                const processed = payload.processedChunks ?? 0;
-                const total = payload.totalChunks ?? 1;
-                setUploadState({
-                  status: 'indexing',
-                  processedChunks: processed,
-                  totalChunks: total,
-                  indexingProgress: Math.round((processed / total) * 100),
-                  setIndex: payload.setIndex,
-                  totalSets: payload.totalSets
-                });
+          if (type === 'error' || payload.type === 'error') {
+            const next = payload as Extract<SsePayload, { type: 'error' }>;
+            finishError(next.error || 'Upload failed');
+          }
+        };
 
-              } else if (currentEvent === 'done') {
-                result = payload;
-                console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename}`);
-                setUploadState({ status: 'complete' });
-                await fetchDocuments();
-                setTimeout(() => setUploadState({ status: 'idle' }), 3000);
+        const flushEvent = () => {
+          if (dataLines.length === 0) {
+            eventName = 'message';
+            return;
+          }
+          parseEvent(eventName, dataLines.join('\n').trim());
+          eventName = 'message';
+          dataLines = [];
+        };
 
-              } else if (currentEvent === 'error') {
-                console.error('[useDocuments] Server error event:', payload);
-                setUploadState({
-                  status: 'error',
-                  error: payload.message || 'Upload failed',
-                  code: payload.code || 'UNKNOWN'
-                });
-              }
+        const parseStream = () => {
+          const chunk = xhr.responseText.slice(lastResponseIndex);
+          if (!chunk) return;
+          lastResponseIndex = xhr.responseText.length;
 
-              currentEvent = '';
-            } catch (e) {
-              console.warn('[useDocuments] Failed to parse SSE data:', rawData);
+          const lines = chunk.split(/\r?\n/);
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim() || 'message';
+              continue;
+            }
+            if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trimStart());
+              continue;
+            }
+            if (line.trim() === '') {
+              flushEvent();
             }
           }
-        }
+        };
 
-        resolve(result);
-      });
+        xhr.open('POST', '/api/documents/upload', true);
+        xhr.setRequestHeader('Accept', 'text/event-stream');
 
-      xhr.addEventListener('error', () => {
-        console.error('[useDocuments] XHR network error');
-        setUploadState({ status: 'error', error: 'Network error', code: 'NETWORK_ERROR' });
-        resolve(null);
-      });
+        xhr.upload.onprogress = (event) => {
+          const uploadProgress =
+            event.lengthComputable && event.total > 0
+              ? clampProgress((event.loaded / event.total) * 100)
+              : 0;
 
-      xhr.open('POST', '/api/documents/upload');
-      xhr.setRequestHeader('x-session-id', sessionId);
-      xhr.send(formData);
-    });
-  }, [sessionId, fetchDocuments]);
+          setUploadState((prev) => {
+            if (prev.status === 'indexing' || prev.status === 'done') return prev;
 
-  const deleteDocument = useCallback(async (documentId: string, filename: string) => {
-    try {
-      const response = await fetch(`/api/documents/${documentId}?filename=${encodeURIComponent(filename)}`, {
-        method: 'DELETE',
-        headers: { 'x-session-id': sessionId }
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await fetchDocuments();
-      return true;
-    } catch (error) {
-      console.error('[useDocuments] Failed to delete document:', error);
-      return false;
-    }
-  }, [sessionId, fetchDocuments]);
+            const snapshot: UploadProgressSnapshot = {
+              uploadProgress,
+              uploadBytesLoaded: event.loaded,
+              uploadBytesTotal: event.total,
+              uploadLengthComputable: event.lengthComputable,
+            };
+
+            return {
+              status: 'uploading',
+              ...snapshot,
+            };
+          });
+        };
+
+        xhr.upload.onloadstart = () => {
+          setUploadState({
+            status: 'uploading',
+            uploadProgress: 0,
+            uploadBytesLoaded: 0,
+            uploadBytesTotal: file.size,
+            uploadLengthComputable: file.size > 0,
+          });
+        };
+
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState === XMLHttpRequest.LOADING) {
+            parseStream();
+          }
+        };
+
+        xhr.onprogress = () => {
+          if (xhr.readyState === XMLHttpRequest.LOADING) {
+            parseStream();
+          }
+        };
+
+        xhr.onload = () => {
+          parseStream();
+          flushEvent();
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            finishError(`Upload failed with status ${xhr.status}`);
+            return;
+          }
+
+          void finishSuccess();
+        };
+
+        xhr.onerror = () => finishError('Network error while uploading document');
+        xhr.onabort = () => finishError('Upload cancelled');
+
+        xhr.send(formData);
+      }),
+    [fetchDocuments]
+  );
+
+  const deleteDocument = useCallback(async (documentId: string) => {
+    const response = await fetch(`/api/documents/${documentId}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete document');
+    setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+  }, []);
 
   const resetUploadState = useCallback(() => {
     setUploadState({ status: 'idle' });
   }, []);
 
-  return {
-    documents,
-    globalDocuments,
-    loading,
-    uploadState,
-    uploadDocument,
-    deleteDocument,
-    resetUploadState,
-    refreshDocuments: fetchDocuments
-  };
+  return useMemo(
+    () => ({
+      documents,
+      isFetching,
+      uploadState,
+      fetchDocuments,
+      uploadDocument,
+      deleteDocument,
+      resetUploadState,
+    }),
+    [documents, isFetching, uploadState, fetchDocuments, uploadDocument, deleteDocument, resetUploadState]
+  );
 }
