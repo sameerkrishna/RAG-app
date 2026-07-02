@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDocuments } from '../hooks/useDocuments';
-import { Upload, FileIcon, Trash2, AlertCircle, Loader2, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Upload, FileIcon, Trash2, AlertCircle, Loader2, CheckCircle, ArrowLeft, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { formatBytes, formatTimestamp } from '../lib/utils';
 import type { Document } from '../types';
@@ -41,16 +41,19 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   } = useDocuments(sessionId);
 
   const { isSeeding } = useSeeding();
-  const [dragOver, setDragOver] = useState(false);
+  const [dragOver, setDragOver]         = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError]       = useState<string | null>(null);
+  const [confirmDoc, setConfirmDoc]     = useState<Document | null>(null);
 
   const handleFileSelect = (file: File) => {
+    setFileError(null);
     if (file.type !== 'application/pdf') {
-      alert('Only PDF files are supported');
+      setFileError('Only PDF files are supported.');
       return;
     }
     if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
-      alert(`File exceeds ${MAX_UPLOAD_SIZE_MB}MB limit`);
+      setFileError(`File exceeds ${MAX_UPLOAD_SIZE_MB}MB limit.`);
       return;
     }
     setSelectedFile(file);
@@ -69,9 +72,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     setDragOver(true);
   };
 
-  const handleDragLeave = () => {
-    setDragOver(false);
-  };
+  const handleDragLeave = () => setDragOver(false);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -85,42 +86,69 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     if (file) handleFileSelect(file);
   };
 
-  const handleDelete = async (doc: Document) => {
-    if (doc.source_type === 'seed') {
-      alert('Seed documents cannot be deleted. Only session uploads can be removed.');
-      return;
-    }
-    if (confirm(`Delete "${doc.filename}"?`)) {
-      await deleteDocument(doc.document_id);
-    }
+  const handleDeleteConfirmed = async () => {
+    if (!confirmDoc) return;
+    await deleteDocument(confirmDoc.document_id, confirmDoc.filename);
+    setConfirmDoc(null);
   };
 
   const renderUploadState = () => {
     switch (uploadState.status) {
       case 'uploading':
         return (
-          <div className="flex items-center gap-2 text-sm text-info">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Uploading...
+            Uploading file...
           </div>
         );
+
+      case 'upload_complete':
+        return (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            File received — starting embedding...
+          </div>
+        );
+
+      case 'indexing': {
+        const processed = (uploadState as any).processedChunks ?? 0;
+        const total     = (uploadState as any).totalChunks ?? 1;
+        const pct       = Math.round((processed / total) * 100);
+        return (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Indexing chunks...</span>
+              <span>{processed} / {total}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-1.5 rounded-full bg-primary transition-all duration-300"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      }
+
       case 'complete':
         return (
-          <div className="flex items-center gap-2 text-sm text-success">
+          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
             <CheckCircle className="h-4 w-4" />
             Upload complete!
           </div>
         );
+
       case 'error':
         return (
           <div className="flex items-center gap-2 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
-            {uploadState.error}
+            {(uploadState as any).error}
             <Button variant="outline" size="sm" onClick={resetUploadState}>
               Retry
             </Button>
           </div>
         );
+
       default:
         return null;
     }
@@ -129,7 +157,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const allDocuments = [...documents, ...globalDocuments];
 
   const renderDocuments = () => {
-    // Still seeding and no docs fetched yet — show skeleton
     if (isSeeding && allDocuments.length === 0) {
       return (
         <section className="space-y-3">
@@ -147,7 +174,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       );
     }
 
-    // Seeding done but still empty (should not happen in practice)
     if (allDocuments.length === 0) {
       return (
         <div className="rounded-xl border bg-card py-16 text-center">
@@ -170,40 +196,64 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         </h2>
         <div className="grid gap-2">
           {allDocuments.map(doc => (
-            <div
-              key={doc.document_id}
-              className="flex items-start justify-between rounded-xl border bg-card p-4 transition-colors hover:bg-accent/30"
-            >
-              <div className="flex items-start gap-3">
-                <FileIcon className="mt-0.5 h-5 w-5 text-muted-foreground" />
-                <div>
-                  <h3 className="text-sm font-medium">{doc.filename}</h3>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span>{doc.chunk_count} chunks</span>
-                    <span>{doc.page_count} pages</span>
-                    {doc.source_type === 'seed' && (
-                      <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">
-                        Seed
-                      </span>
-                    )}
-                    {doc.upload_timestamp && (
-                      <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
-                    )}
+            <div key={doc.document_id}>
+              <div className="flex items-start justify-between rounded-xl border bg-card p-4 transition-colors hover:bg-accent/30">
+                <div className="flex items-start gap-3">
+                  <FileIcon className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <h3 className="text-sm font-medium">{doc.filename}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>{doc.chunk_count} chunks</span>
+                      <span>{doc.page_count} pages</span>
+                      {doc.source_type === 'seed' && (
+                        <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">
+                          Seed
+                        </span>
+                      )}
+                      {doc.upload_timestamp && (
+                        <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
+                <div className="flex items-center gap-2">
+                  {doc.source_type !== 'seed' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setConfirmDoc(confirmDoc?.document_id === doc.document_id ? null : doc)}
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {doc.source_type !== 'seed' && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(doc)}
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
+
+              {/* Inline delete confirmation — no browser dialog */}
+              {confirmDoc?.document_id === doc.document_id && (
+                <div className="mx-1 flex items-center justify-between rounded-b-xl border border-t-0 bg-destructive/5 px-4 py-3">
+                  <span className="text-sm text-destructive">
+                    Delete &ldquo;{doc.filename}&rdquo;?
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDoc(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={handleDeleteConfirmed}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -235,6 +285,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       {/* Content */}
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-6">
+
           {/* Upload Section */}
           {documents.length < MAX_PDFS && (
             <section className="rounded-xl border bg-card p-6">
@@ -267,6 +318,17 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </p>
               </div>
 
+              {/* Inline file validation error */}
+              {fileError && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {fileError}
+                  <button onClick={() => setFileError(null)} className="ml-auto">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+
               {selectedFile && (
                 <div className="mt-4 rounded-lg bg-secondary/50 p-4">
                   <div className="flex items-center justify-between">
@@ -286,6 +348,15 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                       </Button>
                     </div>
                   </div>
+                  <div className="mt-3">
+                    {renderUploadState()}
+                  </div>
+                </div>
+              )}
+
+              {/* Show progress even after selectedFile is cleared (during indexing) */}
+              {!selectedFile && uploadState.status !== 'idle' && (
+                <div className="mt-3">
                   {renderUploadState()}
                 </div>
               )}
