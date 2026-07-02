@@ -30,7 +30,7 @@ export function useDocuments(sessionId: string) {
 
   const uploadDocument = useCallback(async (file: File) => {
     console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
-    setUploadState({ status: 'uploading', uploadProgress: 0 } as any);
+    setUploadState({ status: 'uploading', uploadProgress: 0 });
 
     const formData = new FormData();
     formData.append('file', file);
@@ -43,14 +43,14 @@ export function useDocuments(sessionId: string) {
       xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) {
           const pct = Math.round((e.loaded / e.total) * 100);
-          setUploadState({ status: 'uploading', uploadProgress: pct } as any);
+          setUploadState({ status: 'uploading', uploadProgress: pct });
         }
       });
 
       xhr.addEventListener('load', async () => {
         if (xhr.status < 200 || xhr.status >= 300) {
           console.error('[useDocuments] Upload failed:', xhr.status, xhr.responseText);
-          setUploadState({ status: 'error', error: 'Upload failed', code: 'HTTP_ERROR' } as any);
+          setUploadState({ status: 'error', error: 'Upload failed', code: 'HTTP_ERROR' });
           resolve(null);
           return;
         }
@@ -58,7 +58,7 @@ export function useDocuments(sessionId: string) {
         // Phase 2: parse SSE events from the buffered XHR response
         // XHR buffers the full SSE text in responseText after the stream ends.
         console.log('[useDocuments] XHR done — parsing SSE events from responseText');
-        setUploadState({ status: 'uploading', uploadProgress: 100 } as any);
+        setUploadState({ status: 'uploading', uploadProgress: 100 });
 
         const lines = xhr.responseText.split('\n');
         let currentEvent = '';
@@ -108,20 +108,23 @@ export function useDocuments(sessionId: string) {
                 });
 
               } else if (currentEvent === 'embedding_progress') {
+                const processed = payload.processedChunks ?? 0;
+                const total = payload.totalChunks ?? 1;
                 setUploadState({
                   status: 'indexing',
-                  processedChunks: payload.processedChunks,
-                  totalChunks: payload.totalChunks,
+                  processedChunks: processed,
+                  totalChunks: total,
+                  indexingProgress: Math.round((processed / total) * 100),
                   setIndex: payload.setIndex,
                   totalSets: payload.totalSets
-                } as any);
+                });
 
               } else if (currentEvent === 'done') {
                 result = payload;
                 console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename}`);
-                setUploadState({ status: 'complete' } as any);
+                setUploadState({ status: 'complete' });
                 await fetchDocuments();
-                setTimeout(() => setUploadState({ status: 'idle' } as any), 3000);
+                setTimeout(() => setUploadState({ status: 'idle' }), 3000);
 
               } else if (currentEvent === 'error') {
                 console.error('[useDocuments] Server error event:', payload);
@@ -129,7 +132,7 @@ export function useDocuments(sessionId: string) {
                   status: 'error',
                   error: payload.message || 'Upload failed',
                   code: payload.code || 'UNKNOWN'
-                } as any);
+                });
               }
 
               currentEvent = '';
@@ -144,7 +147,7 @@ export function useDocuments(sessionId: string) {
 
       xhr.addEventListener('error', () => {
         console.error('[useDocuments] XHR network error');
-        setUploadState({ status: 'error', error: 'Network error', code: 'NETWORK_ERROR' } as any);
+        setUploadState({ status: 'error', error: 'Network error', code: 'NETWORK_ERROR' });
         resolve(null);
       });
 
@@ -170,7 +173,7 @@ export function useDocuments(sessionId: string) {
   }, [sessionId, fetchDocuments]);
 
   const resetUploadState = useCallback(() => {
-    setUploadState({ status: 'idle' } as any);
+    setUploadState({ status: 'idle' });
   }, []);
 
   return {

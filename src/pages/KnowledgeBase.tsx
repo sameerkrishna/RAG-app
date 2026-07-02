@@ -173,16 +173,16 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
       // Green bar: 0 → 100% while bytes are being sent
       case 'uploading': {
-        const pct = (uploadState as any).uploadProgress ?? 0;
+        const pct = uploadState.uploadProgress;
         return (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>Uploading file...</span>
               <span>{pct}%</span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className="h-1.5 rounded-full bg-green-500 transition-all duration-200"
+                className="h-2 rounded-full bg-green-500 transition-all duration-200"
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -200,18 +200,18 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
       // Blue bar: chunks processed
       case 'indexing': {
-        const processed = (uploadState as any).processedChunks ?? 0;
-        const total     = (uploadState as any).totalChunks ?? 1;
-        const pct       = Math.round((processed / total) * 100);
+        const processed = uploadState.processedChunks;
+        const total     = uploadState.totalChunks;
+        const pct       = uploadState.indexingProgress;
         return (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Indexing chunks...</span>
-              <span>{processed} / {total}</span>
+              <span>Chunking and Embedding...</span>
+              <span>{processed} / {total} chunks — {pct}%</span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className="h-1.5 rounded-full bg-primary transition-all duration-300"
+                className="h-2 rounded-full bg-primary transition-all duration-300"
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -231,7 +231,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         return (
           <div className="flex items-center gap-2 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
-            {(uploadState as any).error}
+            {uploadState.error}
             <Button variant="outline" size="sm" onClick={resetUploadState}>Retry</Button>
           </div>
         );

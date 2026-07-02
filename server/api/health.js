@@ -22,11 +22,6 @@ export async function health(req, res) {
     };
   }
 
-  // Check Gemini (via API key presence)
-  healthStatus.services.gemini = {
-    status: process.env.GEMINI_API_KEY ? 'configured' : 'not_configured'
-  };
-
   // Get rate limit state
   healthStatus.rateLimit = getRateLimitState();
 

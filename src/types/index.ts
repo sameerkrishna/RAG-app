@@ -54,15 +54,16 @@ export interface Document {
 
 export type UploadState =
   | { status: 'idle' }
-  | { status: 'uploading' }                                          // phase 1: file being sent
+  | { status: 'uploading'; uploadProgress: number }                  // phase 1: file bytes being sent (0–100)
   | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
   | {
       status: 'indexing';
       processedChunks: number;
       totalChunks: number;
+      indexingProgress: number;  // 0–100, computed as Math.round(processedChunks/totalChunks*100)
       setIndex: number;
       totalSets: number;
-    }                                                                 // phase 2: embedding in progress
+    }                                                                 // phase 2: chunking + embedding
   | { status: 'complete' }
   | { status: 'error'; error: string; code: string };
 
