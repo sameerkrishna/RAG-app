@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { buildPrompt, getRefusalResponse } from './promptService.js';
 import { LLMUnavailableError } from '../utils/errors.js';
 
@@ -6,9 +6,11 @@ let genAI = null;
 
 function getGenAI() {
   if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY is undefined');
-    genAI = new GoogleGenerativeAI(apiKey);
+    genAI = new GoogleGenAI({
+      vertexai: true,
+      project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
+    });
   }
   return genAI;
 }
@@ -18,58 +20,59 @@ const FALLBACK_MODEL = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
 const FIRST_TOKEN_TIMEOUT = parseInt(process.env.LLM_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000 || 12000;
 const REQUEST_TIMEOUT = parseInt(process.env.LLM_REQUEST_TIMEOUT_SECONDS) * 1000 || 45000;
 
-let primaryModel = null;
-let fallbackModel = null;
-
-function getPrimaryModel() {
-  if (!primaryModel) {
-    primaryModel = getGenAI().getGenerativeModel({ model: PRIMARY_MODEL });
-  }
-  return primaryModel;
+function getPrimaryModelName() {
+  return PRIMARY_MODEL;
 }
 
-function getFallbackModel() {
-  if (!fallbackModel) {
-    fallbackModel = getGenAI().getGenerativeModel({ model: FALLBACK_MODEL });
-  }
-  return fallbackModel;
+function getFallbackModelName() {
+  return FALLBACK_MODEL;
+}
+
+function getTextFromResponse(result) {
+  return result?.text || result?.response?.text?.() || '';
+}
+
+function getTextFromChunk(chunk) {
+  if (typeof chunk?.text === 'string') return chunk.text;
+  if (typeof chunk?.text === 'function') return chunk.text();
+  return '';
 }
 
 export async function generateResponse(prompt) {
-  // FIX 6: create controller and actually pass signal to generateContent
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
   try {
-    const result = await getPrimaryModel().generateContent(
-      {
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topP: 0.95,
-          maxOutputTokens: 2048
-        }
-      },
-      { signal: controller.signal }  // FIX 6: pass signal
-    );
+    const result = await getGenAI().models.generateContent({
+      model: getPrimaryModelName(),
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        temperature: 0.7,
+        topP: 0.95,
+        maxOutputTokens: 2048
+      }
+    }, {
+      signal: controller.signal
+    });
 
     clearTimeout(timeoutId);
-    return result.response.text();
+    return getTextFromResponse(result);
   } catch (primaryError) {
     clearTimeout(timeoutId);
     console.error('Primary model failed:', primaryError.message);
 
     try {
-      const fallbackResult = await getFallbackModel().generateContent({
+      const fallbackResult = await getGenAI().models.generateContent({
+        model: getFallbackModelName(),
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
+        config: {
           temperature: 0.7,
           topP: 0.95,
           maxOutputTokens: 2048
         }
       });
 
-      return fallbackResult.response.text();
+      return getTextFromResponse(fallbackResult);
     } catch (fallbackError) {
       console.error('Fallback model also failed:', fallbackError.message);
       throw new LLMUnavailableError();
@@ -78,7 +81,7 @@ export async function generateResponse(prompt) {
 }
 
 export async function* streamResponse(prompt) {
-  let model = getPrimaryModel();
+  let modelName = getPrimaryModelName();
   let retries = 0;
   const maxRetries = 2;
 
@@ -86,13 +89,16 @@ export async function* streamResponse(prompt) {
     try {
       const controller = new AbortController();
 
-      const result = await model.generateContentStream({
+      const result = await getGenAI().models.generateContentStream({
+        model: modelName,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
+        config: {
           temperature: 0.7,
           topP: 0.95,
           maxOutputTokens: 2048
         }
+      }, {
+        signal: controller.signal
       });
 
       let firstToken = true;
@@ -104,7 +110,7 @@ export async function* streamResponse(prompt) {
           throw new Error('First token timeout — no response from model');
         }
 
-        const text = chunk.text();
+        const text = getTextFromChunk(chunk);
         if (text) {
           if (firstToken) {
             firstToken = false;
@@ -116,7 +122,6 @@ export async function* streamResponse(prompt) {
 
       clearTimeout(firstTokenTimeout);
       return { success: true };
-
     } catch (error) {
       retries++;
       console.error(`Model attempt ${retries} failed:`, error.message);
@@ -126,7 +131,7 @@ export async function* streamResponse(prompt) {
         throw new LLMUnavailableError();
       }
 
-      model = getFallbackModel();
+      modelName = getFallbackModelName();
     }
   }
 }
@@ -169,24 +174,22 @@ export function getRefusalText() {
 }
 
 export async function generateWebSearchResponse(query, groundingContent) {
-  const model = getPrimaryModel();
-
-  const result = await model.generateContent({
+  const result = await getGenAI().models.generateContent({
+    model: getPrimaryModelName(),
     contents: [{
       role: 'user',
       parts: [{ text: `Based on these web search results, answer the question: "${query}"\n\n${groundingContent}` }]
     }],
-    generationConfig: {
+    config: {
       temperature: 0.7,
       topP: 0.95,
-      maxOutputTokens: 2048
-    },
-    tools: [{ googleSearch: {} }]
+      maxOutputTokens: 2048,
+      tools: [{ googleSearch: {} }]
+    }
   });
 
-  const response = result.response;
-  const text = response.text();
-  const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+  const text = getTextFromResponse(result);
+  const groundingMetadata = result?.candidates?.[0]?.groundingMetadata;
 
   return {
     text,
