@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  Document,
   DocumentRecord,
   DocumentsResponse,
   UploadProgressSnapshot,
@@ -48,24 +49,30 @@ function tryParseJson<T>(value: string): T | null {
   }
 }
 
-export function useDocuments() {
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+export function useDocuments(sessionId: string) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
   const [isFetching, setIsFetching] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
     setIsFetching(true);
     try {
-      const response = await fetch('/api/documents');
+      const response = await fetch(`/api/documents?sessionId=${sessionId}`);
       if (!response.ok) throw new Error('Failed to fetch documents');
-      const data = (await response.json()) as DocumentsResponse;
-      setDocuments(data.documents ?? []);
+      const data = await response.json();
+      setDocuments(data.sessionDocuments ?? []);
+      setGlobalDocuments(data.globalDocuments ?? []);
     } catch (error) {
       console.error('Failed to fetch documents:', error);
     } finally {
       setIsFetching(false);
     }
-  }, []);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId) void fetchDocuments();
+  }, [sessionId, fetchDocuments]);
 
   const uploadDocument = useCallback(
     (file: File, options?: UploadOptions) =>
@@ -287,6 +294,7 @@ export function useDocuments() {
   return useMemo(
     () => ({
       documents,
+      globalDocuments,
       isFetching,
       uploadState,
       fetchDocuments,
@@ -294,6 +302,6 @@ export function useDocuments() {
       deleteDocument,
       resetUploadState,
     }),
-    [documents, isFetching, uploadState, fetchDocuments, uploadDocument, deleteDocument, resetUploadState]
+    [documents, globalDocuments, isFetching, uploadState, fetchDocuments, uploadDocument, deleteDocument, resetUploadState]
   );
 }

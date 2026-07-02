@@ -112,14 +112,12 @@ function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
 export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const {
     documents,
+    globalDocuments,
     uploadState,
     uploadDocument,
     deleteDocument,
     resetUploadState
-  } = useDocuments(); // Note: sessionId is ignored by the hook but was passed previously
-
-  // Provide a safe fallback since useDocuments doesn't return globalDocuments
-  const globalDocuments: Document[] = [];
+  } = useDocuments(sessionId);
 
   const { isSeeding } = useSeeding();
   const [dragOver, setDragOver]         = useState(false);
