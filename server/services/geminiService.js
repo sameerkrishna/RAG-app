@@ -94,7 +94,7 @@ export async function* streamResponse(prompt) {
       requestTimeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
       const result = await getGenAI().models.generateContentStream({
-        model: modelName,
+        model: "gemini-3.5-flash",
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           temperature: 0.7,
