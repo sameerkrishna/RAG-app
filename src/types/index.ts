@@ -54,18 +54,43 @@ export interface Document {
 
 export type UploadState =
   | { status: 'idle' }
-  | { status: 'uploading' }                                          // phase 1: file being sent
-  | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
+  | {
+      status: 'uploading';
+      uploadProgress: number;
+      uploadBytesLoaded?: number;
+      uploadBytesTotal?: number;
+      uploadLengthComputable?: boolean;
+    }
+  | {
+      status: 'upload_complete';
+      documentId: string;
+      totalChunks: number;
+      totalSets: number;
+      uploadProgress: number;
+    }
   | {
       status: 'indexing';
       processedChunks: number;
       totalChunks: number;
       setIndex: number;
       totalSets: number;
-    }                                                                 // phase 2: embedding in progress
-  | { status: 'complete' }
-  | { status: 'error'; error: string; code: string };
-
+      indexingProgress: number;
+      uploadProgress?: number;
+      documentId?: string;
+    }
+  | {
+      status: 'done';
+      documentId: string;
+      totalChunks?: number;
+      uploadProgress?: number;
+      indexingProgress?: number;
+    }
+  | {
+      status: 'error';
+      error: string;
+      uploadProgress?: number;
+      indexingProgress?: number;
+    };
 export interface WebSearchSource {
   uri: string;
   title: string;
