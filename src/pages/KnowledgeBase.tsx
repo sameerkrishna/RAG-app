@@ -54,6 +54,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const [selectedFile, setSelectedFile]   = useState<File | null>(null);
   const [fileError, setFileError]         = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget]   = useState<Document | null>(null);
+  const [isDeleting, setIsDeleting]       = useState(false);   // <-- ADDED
 
   const sessionUploads   = documents.filter(d => d.source_type === 'session_upload');
   const uploadedCount    = sessionUploads.length;
@@ -106,10 +107,16 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     setDeleteTarget(doc);
   };
 
+  // MODIFIED confirmDelete to show loader while deleting
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    await deleteDocument(deleteTarget.document_id, deleteTarget.filename);
-    setDeleteTarget(null);
+    setIsDeleting(true);
+    try {
+      await deleteDocument(deleteTarget.document_id, deleteTarget.filename);
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   const isUploading = uploadState.status === 'uploading';
@@ -351,11 +358,11 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         </div>
       </main>
 
-      {/* Delete confirmation modal */}
+      {/* Delete confirmation modal — updated buttons */}
       {deleteTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={() => setDeleteTarget(null)}
+          onClick={() => { if (!isDeleting) setDeleteTarget(null); }}
         >
           <div
             className="mx-4 w-full max-w-sm rounded-xl border bg-card p-6 shadow-lg space-y-4"
@@ -373,15 +380,24 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
               </div>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeleting}
+              >
                 Cancel
               </Button>
               <Button
                 size="sm"
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={confirmDelete}
+                disabled={isDeleting}
               >
-                Delete
+                {isDeleting ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : null}
+                {isDeleting ? 'Deleting...' : 'Delete'}
               </Button>
             </div>
           </div>
