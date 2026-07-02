@@ -169,76 +169,102 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   // ── Upload progress renderer ──────────────────────────────────────────────
   const renderUploadState = () => {
-    switch (uploadState.status) {
+    const { status } = uploadState;
 
-      // Green bar: 0 → 100% while bytes are being sent
-      case 'uploading': {
-        const pct = uploadState.uploadProgress;
-        return (
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Uploading file...</span>
-              <span>{pct}%</span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+    // Nothing to show when idle
+    if (status === 'idle') return null;
+
+    // Complete state
+    if (status === 'complete' || status === 'done') {
+      return (
+        <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+          <CheckCircle className="h-4 w-4" />
+          Upload complete!
+        </div>
+      );
+    }
+
+    // Error state
+    if (status === 'error') {
+      return (
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          {uploadState.error}
+          <Button variant="outline" size="sm" onClick={resetUploadState}>Retry</Button>
+        </div>
+      );
+    }
+
+    // ── Active states: uploading | upload_complete | indexing ──────────────
+    // Derive green bar values
+    const uploadPct =
+      'uploadProgress' in uploadState && typeof uploadState.uploadProgress === 'number'
+        ? uploadState.uploadProgress
+        : 0;
+    const lengthComputable =
+      'uploadLengthComputable' in uploadState
+        ? uploadState.uploadLengthComputable !== false
+        : true;
+    const uploadFinished = status === 'upload_complete' || status === 'indexing';
+
+    // Derive blue bar values
+    const isIndexing = status === 'indexing';
+    const processed = isIndexing ? uploadState.processedChunks : 0;
+    const total = isIndexing ? uploadState.totalChunks : 0;
+    const indexPct = isIndexing ? uploadState.indexingProgress : 0;
+
+    return (
+      <div className="space-y-3">
+        {/* ── Green bar: file upload bytes ── */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              {!uploadFinished && <Loader2 className="h-3 w-3 animate-spin" />}
+              {uploadFinished ? '✓ File uploaded' : 'Uploading file...'}
+            </span>
+            <span>
+              {lengthComputable || uploadFinished
+                ? `${uploadFinished ? 100 : uploadPct}%`
+                : 'sending…'}
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            {lengthComputable || uploadFinished ? (
               <div
                 className="h-2 rounded-full bg-green-500 transition-all duration-200"
-                style={{ width: `${pct}%` }}
+                style={{ width: `${uploadFinished ? 100 : uploadPct}%` }}
               />
-            </div>
+            ) : (
+              /* Indeterminate shimmer when browser can't report byte totals */
+              <div className="h-2 rounded-full bg-green-500 progress-indeterminate" />
+            )}
           </div>
-        );
-      }
+        </div>
 
-      case 'upload_complete':
-        return (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            File received — starting embedding...
-          </div>
-        );
-
-      // Blue bar: chunks processed
-      case 'indexing': {
-        const processed = uploadState.processedChunks;
-        const total     = uploadState.totalChunks;
-        const pct       = uploadState.indexingProgress;
-        return (
+        {/* ── Blue bar: chunking & embedding ── */}
+        {(status === 'upload_complete' || isIndexing) && (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Chunking and Embedding...</span>
-              <span>{processed} / {total} chunks — {pct}%</span>
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Chunking and Embedding...
+              </span>
+              <span>
+                {isIndexing
+                  ? `${processed} / ${total} chunks — ${indexPct}%`
+                  : 'starting…'}
+              </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-2 rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${pct}%` }}
+                style={{ width: `${indexPct}%` }}
               />
             </div>
           </div>
-        );
-      }
-
-      case 'complete':
-        return (
-          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-            <CheckCircle className="h-4 w-4" />
-            Upload complete!
-          </div>
-        );
-
-      case 'error':
-        return (
-          <div className="flex items-center gap-2 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4" />
-            {uploadState.error}
-            <Button variant="outline" size="sm" onClick={resetUploadState}>Retry</Button>
-          </div>
-        );
-
-      default:
-        return null;
-    }
+        )}
+      </div>
+    );
   };
 
   const allDocuments = [...documents, ...globalDocuments];

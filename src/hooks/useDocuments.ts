@@ -100,13 +100,17 @@ export function useDocuments() {
 
           if (type === 'upload_complete' || payload.type === 'upload_complete') {
             const next = payload as Extract<SsePayload, { type: 'upload_complete' }>;
-            setUploadState({
+            setUploadState((prev) => ({
               status: 'upload_complete',
               documentId: next.documentId,
               totalChunks: next.totalChunks,
               totalSets: next.totalSets,
               uploadProgress: 100,
-            });
+              uploadLengthComputable:
+                'uploadLengthComputable' in prev && typeof prev.uploadLengthComputable === 'boolean'
+                  ? prev.uploadLengthComputable
+                  : true,
+            }));
             return;
           }
 
@@ -128,6 +132,10 @@ export function useDocuments() {
                 'uploadProgress' in prev && typeof prev.uploadProgress === 'number'
                   ? prev.uploadProgress
                   : 100,
+              uploadLengthComputable:
+                'uploadLengthComputable' in prev && typeof prev.uploadLengthComputable === 'boolean'
+                  ? prev.uploadLengthComputable
+                  : true,
               documentId:
                 'documentId' in prev && typeof prev.documentId === 'string'
                   ? prev.documentId

@@ -67,6 +67,7 @@ export type UploadState =
       totalChunks: number;
       totalSets: number;
       uploadProgress: number;
+      uploadLengthComputable?: boolean;
     }
   | {
       status: 'indexing';
@@ -76,6 +77,7 @@ export type UploadState =
       totalSets: number;
       indexingProgress: number;
       uploadProgress?: number;
+      uploadLengthComputable?: boolean;
       documentId?: string;
     }
   | {

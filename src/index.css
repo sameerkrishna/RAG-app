@@ -84,3 +84,14 @@
     @apply inline-block w-1 ml-0.5 animate-pulse;
   }
 }
+
+/* Indeterminate progress bar animation */
+@keyframes progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+  width: 40%;
+}
