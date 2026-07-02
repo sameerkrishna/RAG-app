@@ -54,49 +54,78 @@ export interface Document {
 
 export type UploadState =
   | { status: 'idle' }
-  | { status: 'uploading'; uploadProgress: number }                  // phase 1: file bytes being sent (0–100)
-  | { status: 'upload_complete'; documentId: string; totalChunks: number; totalSets: number }
   | {
-    status: 'uploading';
-    uploadProgress: number;
-    uploadBytesLoaded?: number;
-    uploadBytesTotal?: number;
-    uploadLengthComputable?: boolean;
-  }
+      status: 'uploading';
+      uploadProgress: number;
+      uploadBytesLoaded?: number;
+      uploadBytesTotal?: number;
+      uploadLengthComputable?: boolean;
+    }
   | {
-    status: 'upload_complete';
-    documentId: string;
-    totalChunks: number;
-    totalSets: number;
-    uploadProgress: number;
-  }
+      status: 'upload_complete';
+      documentId: string;
+      totalChunks: number;
+      totalSets: number;
+      uploadProgress: number;
+    }
   | {
-    status: 'indexing';
-    processedChunks: number;
-    totalChunks: number;
-    setIndex: number;
-    totalSets: number;
-    indexingProgress: number;
-    uploadProgress?: number;
-    documentId?: string;
-  }
+      status: 'indexing';
+      processedChunks: number;
+      totalChunks: number;
+      setIndex: number;
+      totalSets: number;
+      indexingProgress: number;
+      uploadProgress?: number;
+      documentId?: string;
+    }
   | {
-    status: 'done';
-    documentId: string;
-    totalChunks?: number;
-    uploadProgress?: number;
-    indexingProgress?: number;
-  }
+      status: 'done';
+      documentId: string;
+      totalChunks?: number;
+      uploadProgress?: number;
+      indexingProgress?: number;
+    }
   | {
-    status: 'error';
-    error: string;
-    uploadProgress?: number;
-    indexingProgress?: number;
-  };
-    }                                                                 // phase 2: chunking + embedding
-  | { status: 'complete' }
-  | { status: 'error'; error: string; code: string };
+      status: 'error';
+      error: string;
+      uploadProgress?: number;
+      indexingProgress?: number;
+    };
 
+export interface DocumentRecord {
+  id: string;
+  filename: string;
+  createdAt?: string;
+  updatedAt?: string;
+  size?: number;
+  mimeType?: string;
+  chunkCount?: number;
+}
+
+export interface DocumentsResponse {
+  documents: DocumentRecord[];
+}
+
+export interface DeleteDialogState {
+  open: boolean;
+  documentId: string | null;
+  filename: string;
+}
+
+export interface UploadProgressSnapshot {
+  uploadProgress: number;
+  uploadBytesLoaded?: number;
+  uploadBytesTotal?: number;
+  uploadLengthComputable?: boolean;
+}
+
+export interface IndexingProgressSnapshot {
+  indexingProgress: number;
+  processedChunks: number;
+  totalChunks: number;
+  setIndex: number;
+  totalSets: number;
+}
 export interface WebSearchSource {
   uri: string;
   title: string;
