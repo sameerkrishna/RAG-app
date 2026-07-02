@@ -4,6 +4,7 @@ import { EmbeddingError, is429Error } from '../utils/errors.js';
 
 let genAI = null;
 let embeddingModel = null;
+
 const PROJECT_ID = 'project-d48e2f39-2685-4746-aa0';
 const LOCATION = 'us-central1';
 
