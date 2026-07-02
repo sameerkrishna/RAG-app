@@ -9,24 +9,45 @@ function getGenAI() {
     genAI = new GoogleGenAI({
       vertexai: true,
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-      // CRITICAL: Vertex AI requires a valid regional endpoint (e.g., 'us-central1'), NOT 'global'
-      location: process.env.GOOGLE_CLOUD_LOCATION || 'global' 
+      location: 'global'
     });
   }
   return genAI;
 }
 
-const PRIMARY_MODEL =  'gemini-3.1-flash-lite';
+const PRIMARY_MODEL = process.env.GEMINI_MODEL_PRIMARY || 'gemini-3.1-flash-lite';
 const FALLBACK_MODEL = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
 const FIRST_TOKEN_TIMEOUT = parseInt(process.env.LLM_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000 || 12000;
 const REQUEST_TIMEOUT = parseInt(process.env.LLM_REQUEST_TIMEOUT_SECONDS) * 1000 || 45000;
 
-function getPrimaryModelName() { return PRIMARY_MODEL; }
-function getFallbackModelName() { return FALLBACK_MODEL; }
+function getPrimaryModelName() {
+  return PRIMARY_MODEL;
+}
+
+function getFallbackModelName() {
+  return FALLBACK_MODEL;
+}
 
 function getTextFromResponse(result) {
-  // SDK returns text via the top-level property
-  return result?.text || '';
+  return result?.text || result?.response?.text?.() || '';
+}
+
+function getTextFromChunk(chunk) {
+  if (typeof chunk?.text === 'string') return chunk.text;
+  if (typeof chunk?.text === 'function') return chunk.text();
+  return '';
+}
+
+function buildGenerationRequest(model, prompt) {
+  return {
+    model,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      temperature: 0.7,
+      topP: 0.95,
+      maxOutputTokens: 2048
+    }
+  };
 }
 
 export async function generateResponse(prompt) {
@@ -34,11 +55,10 @@ export async function generateResponse(prompt) {
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
   try {
-    const result = await getGenAI().models.generateContent({
-      model: getPrimaryModelName(),
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
-    }, { signal: controller.signal });
+    const result = await getGenAI().models.generateContent(
+      buildGenerationRequest(getPrimaryModelName(), prompt),
+      { signal: controller.signal }
+    );
 
     clearTimeout(timeoutId);
     return getTextFromResponse(result);
@@ -47,11 +67,10 @@ export async function generateResponse(prompt) {
     console.error('Primary model failed:', primaryError.message);
 
     try {
-      const fallbackResult = await getGenAI().models.generateContent({
-        model: getFallbackModelName(),
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
-      });
+      const fallbackResult = await getGenAI().models.generateContent(
+        buildGenerationRequest(getFallbackModelName(), prompt)
+      );
+
       return getTextFromResponse(fallbackResult);
     } catch (fallbackError) {
       console.error('Fallback model also failed:', fallbackError.message);
@@ -73,15 +92,12 @@ export async function* streamResponse(prompt) {
     try {
       requestTimeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-      // FIX: Use responseStream directly. Passed dynamic modelName instead of hardcoded string.
-      const responseStream = await getGenAI().models.generateContentStream({
-        model: modelName, 
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 }
-      }, { signal: controller.signal });
+      const responseStream = await getGenAI().models.generateContentStream(
+        buildGenerationRequest(modelName, prompt),
+        { signal: controller.signal }
+      );
 
-      // FIX: The response itself handles Symbol.asyncIterator, not response.stream
-      if (typeof responseStream[Symbol.asyncIterator] !== 'function') {
+      if (!responseStream || typeof responseStream[Symbol.asyncIterator] !== 'function') {
         throw new Error(`Streaming unavailable for model ${modelName}`);
       }
 
@@ -93,7 +109,7 @@ export async function* streamResponse(prompt) {
           throw new Error('Stream execution aborted by timeout constraint.');
         }
 
-        const text = chunk.text || '';
+        const text = getTextFromChunk(chunk);
         if (text) {
           if (firstToken) {
             firstToken = false;
@@ -105,10 +121,11 @@ export async function* streamResponse(prompt) {
 
       clearTimeout(firstTokenTimeout);
       clearTimeout(requestTimeoutId);
-      return; 
+      return;
 
     } catch (error) {
       retries++;
+
       if (firstTokenTimeout) clearTimeout(firstTokenTimeout);
       if (requestTimeoutId) clearTimeout(requestTimeoutId);
 
@@ -150,6 +167,7 @@ export async function* streamChatResponse(query, retrievedResults, sessionId, me
         return;
       }
     }
+
     yield { type: 'complete', response: fullResponse };
   } catch (error) {
     yield { type: 'error', error: error.message };
@@ -161,7 +179,6 @@ export function getRefusalText() {
 }
 
 export async function generateWebSearchResponse(query, groundingContent) {
-  // FIX: In @google/genai, Google Search Grounding is declared under tools using the object syntax
   const result = await getGenAI().models.generateContent({
     model: getPrimaryModelName(),
     contents: [{
@@ -172,13 +189,13 @@ export async function generateWebSearchResponse(query, groundingContent) {
       temperature: 0.7,
       topP: 0.95,
       maxOutputTokens: 2048,
-      tools: [{ googleSearch: {} }] 
+      tools: [{ googleSearch: {} }]
     }
   });
 
   return {
-    text: result.text || '',
-    groundingMetadata: result.candidates?.[0]?.groundingMetadata || null,
-    groundingChunks: result.candidates?.[0]?.groundingMetadata?.groundingChunks || []
+    text: getTextFromResponse(result),
+    groundingMetadata: result?.candidates?.[0]?.groundingMetadata || null,
+    groundingChunks: result?.candidates?.[0]?.groundingMetadata?.groundingChunks || []
   };
 }
