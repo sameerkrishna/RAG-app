@@ -35,7 +35,6 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
     const embeddingPromises = texts.map(async (rawText) => {
       // Coerce safely to string to prevent API input validation failures
       const text = typeof rawText === 'string' ? rawText : String(rawText);
-
       if (!text || text.trim() === '') {
         throw new EmbeddingError('Cannot embed an empty or missing text block');
       }
