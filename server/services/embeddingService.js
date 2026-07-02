@@ -1,65 +1,75 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { VertexAI } from '@google-cloud/vertexai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
 let embeddingModel = null;
 
-const PROJECT_ID = 'project-d48e2f39-2685-4746-aa0';
-const LOCATION = 'us-central1';
+const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT;
+const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+const MODEL_NAME = 'gemini-embedding-001';
+const OUTPUT_DIMENSIONS = 3072;
 
-const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
+const vertexAI = new VertexAI({
+  project: PROJECT_ID,
+  location: LOCATION
+});
 
 function getEmbeddingModel() {
   if (!embeddingModel) {
     embeddingModel = vertexAI.getGenerativeModel({
-      model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
+      model: MODEL_NAME
     });
-    
   }
   return embeddingModel;
 }
 
-const BATCH_SIZE     = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
-const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
-const OUTPUT_DIMENSIONS = () => parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS) || 3072;
-const GROUP_WAIT_MS  = 61000;
-const RETRY_WAIT_MS  = 15000;
+const BATCH_SIZE = () => parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+const PARALLEL_CALLS = () => parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 4;
+const GROUP_WAIT_MS = 61000;
+const RETRY_WAIT_MS = 15000;
 
-// Embed a single batch of texts (up to BATCH_SIZE).
-// Retries on 429 up to 5 times. Used by both generateEmbeddings and handleUpload.
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const maxAttempts = 5;
-  const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
 
   try {
     const model = getEmbeddingModel();
 
-    const result = await model.batchEmbedContents({
-      requests: texts.map(text => ({
-        model: `models/${modelName}`,
-        content: { parts: [{ text }] },
+    const embeddingPromises = texts.map(async (text) => {
+      const response = await model.embedContent({
+        content: {
+          parts: [{ text }]
+        },
         taskType,
-        outputDimensionality: OUTPUT_DIMENSIONS()
-      }))
+        outputDimensionality: OUTPUT_DIMENSIONS
+      });
+
+      const values = response?.embedding?.values;
+      if (!values) {
+        throw new EmbeddingError('Missing values in individual embedding response');
+      }
+
+      return values;
     });
 
-    if (!result?.embeddings || result.embeddings.length !== texts.length) {
-      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${result?.embeddings?.length ?? 0}`);
+    const embeddings = await Promise.all(embeddingPromises);
+
+    if (embeddings.length !== texts.length) {
+      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${embeddings.length}`);
     }
 
-    return result.embeddings.map(e => {
-      if (!e?.values) throw new EmbeddingError('Missing values in embedding response');
-      return e.values;
-    });
-
+    return embeddings;
   } catch (error) {
-    const is429 = is429Error(error) ||
+    const is429 =
+      is429Error(error) ||
       error?.status === 429 ||
-      error?.message?.includes('RESOURCE_EXHAUSTED');
+      error?.statusCode === 429 ||
+      error?.message?.includes('RESOURCE_EXHAUSTED') ||
+      error?.message?.includes('429');
 
     if (is429 && attempt < maxAttempts) {
       const retryDelay = error.retryAfter || GROUP_WAIT_MS;
-      console.log(`[embedding] Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
+      console.log(
+        `[embedding] Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`
+      );
       await new Promise(resolve => setTimeout(resolve, retryDelay));
       return embedBatch(texts, taskType, attempt + 1);
     }
@@ -68,8 +78,6 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   }
 }
 
-// Exported for documents.js upload handler — embeds one batch group (up to BATCH_SIZE texts)
-// and returns raw vectors array. Caller manages parallelism, waiting, and Chroma writes.
 export async function embedSingleBatchGroup(texts, taskType = 'RETRIEVAL_DOCUMENT') {
   console.log(`[embedding] embedSingleBatchGroup — ${texts.length} texts, taskType=${taskType}`);
   const vectors = await embedBatch(texts, taskType);
@@ -77,14 +85,12 @@ export async function embedSingleBatchGroup(texts, taskType = 'RETRIEVAL_DOCUMEN
   return vectors;
 }
 
-// Full pipeline: embed all chunks with built-in batching + waiting.
-// Used by seed ingestion and any callers that don't need streaming progress.
 export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT', onProgress) {
   if (!chunks || chunks.length === 0) return [];
 
-  const batchSize     = BATCH_SIZE();
+  const batchSize = BATCH_SIZE();
   const parallelCalls = PARALLEL_CALLS();
-  const embeddings    = [];
+  const embeddings = [];
 
   const batches = [];
   for (let i = 0; i < chunks.length; i += batchSize) {
@@ -95,20 +101,25 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
 
   for (let i = 0; i < batches.length; i += parallelCalls) {
     const parallelBatches = batches.slice(i, i + parallelCalls);
-    const groupNum        = Math.floor(i / parallelCalls) + 1;
-    const chunksCovered   = Math.min((i + parallelCalls) * batchSize, chunks.length);
+    const groupNum = Math.floor(i / parallelCalls) + 1;
+    const chunksCovered = Math.min((i + parallelCalls) * batchSize, chunks.length);
 
-    console.log(`[embedding] Group ${groupNum}/${totalGroups} — ${parallelBatches.length} batch call(s) in parallel (chunks ${i * batchSize + 1}–${chunksCovered})...`);
+    console.log(
+      `[embedding] Group ${groupNum}/${totalGroups} — ${parallelBatches.length} batch call(s) in parallel (chunks ${i * batchSize + 1}–${chunksCovered})...`
+    );
 
     const results = await Promise.allSettled(
       parallelBatches.map(batch => embedBatch(batch.map(c => c.text), taskType))
     );
 
     const failedBatches = [];
+
     results.forEach((result, batchIdx) => {
       const batch = parallelBatches[batchIdx];
+
       if (result.status === 'fulfilled') {
         const vectors = result.value;
+
         batch.forEach((chunk, chunkIdx) => {
           const absoluteChunkIdx = (i + batchIdx) * batchSize + chunkIdx;
           embeddings.push({
@@ -119,7 +130,10 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
           });
         });
       } else {
-        console.warn(`[embedding] Batch ${i + batchIdx} failed, will retry individually:`, result.reason?.message);
+        console.warn(
+          `[embedding] Batch ${i + batchIdx} failed, will retry individually:`,
+          result.reason?.message
+        );
         failedBatches.push({ batch, batchIdx: i + batchIdx });
       }
     });
@@ -137,6 +151,7 @@ export async function generateEmbeddings(chunks, taskType = 'RETRIEVAL_DOCUMENT'
     for (const { batch, batchIdx } of failedBatches) {
       console.log(`[embedding] Waiting ${RETRY_WAIT_MS / 1000}s before retrying failed batch ${batchIdx}...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_WAIT_MS));
+
       for (const chunk of batch) {
         try {
           const vectors = await embedBatch([chunk.text], taskType);
@@ -172,6 +187,6 @@ export function getRateLimitState() {
     maxTokensPerMinute: parseInt(process.env.EMBEDDING_RATE_LIMIT_TOKENS_PER_MINUTE) || 30000,
     parallelCalls: PARALLEL_CALLS(),
     maxChunksPerCall: BATCH_SIZE(),
-    outputDimensions: OUTPUT_DIMENSIONS()
+    outputDimensions: OUTPUT_DIMENSIONS
   };
 }
