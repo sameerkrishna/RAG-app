@@ -16,6 +16,7 @@ function getEmbeddingModel() {
     embeddingModel = vertexAI.getGenerativeModel({
       model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
     });
+    
   }
   return embeddingModel;
 }
