@@ -155,7 +155,8 @@ export async function handleUpload(req, res) {
     }
 
     const documentId = uuidv4();
-    const rawChunks  = chunkText(fullText, { chunkSizeTokens: 1000, overlapTokens: 200 });
+    // Use chunker defaults (TARGET=600, MAX=750, OVERLAP=100) — do NOT pass overrides
+    const rawChunks  = chunkText(fullText);
 
     if (rawChunks.length === 0) {
       fs.unlinkSync(file.path);
@@ -212,8 +213,8 @@ export async function handleUpload(req, res) {
     console.log(`[upload] [${sessionId}] Phase 2 start — ${sets.length} sets`);
 
     for (let setIdx = 0; setIdx < sets.length; setIdx++) {
-      const isLastSet    = setIdx === sets.length - 1;
-      const currentSet   = sets[setIdx];
+      const isLastSet     = setIdx === sets.length - 1;
+      const currentSet    = sets[setIdx];
       const setChunkCount = currentSet.reduce((acc, b) => acc + b.length, 0);
 
       console.log(`[upload] [${sessionId}] Set ${setIdx + 1}/${sets.length} — embedding ${currentSet.length} batch call(s) (${setChunkCount} chunks) in parallel`);
@@ -342,7 +343,6 @@ export async function deleteDocument(req, res) {
 
       removeDocumentFromSession(sessionId, documentId);
 
-      // Clear backend memory so LLM forgets deleted doc context
       clearMemory(sessionId);
       console.log(`[delete] Cleared memory for session ${sessionId}`);
     }

@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
+import { getEncoding } from 'js-tiktoken';
 
-const CHARS_PER_TOKEN     = 4;
+// Instantiate a standard token decoder matching OpenAI cl100k_base models
+const encoder = getEncoding('cl100k_base');
+
 const TARGET_CHUNK_TOKENS = 600;   // soft target per chunk
 const MAX_CHUNK_TOKENS    = 750;   // hard cap before forced split
 const OVERLAP_TOKENS      = 100;   // overlap only on oversized paragraphs
@@ -11,7 +14,7 @@ const HEADING_RE = /^(?:[A-Z][A-Z\s]{2,60}$|#{1,4}\s.+|(?:\d+\.)+\s.+)/m;
 
 export function estimateTokens(text) {
   if (!text || typeof text !== 'string') return 0;
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
+  return encoder.encode(text).length;
 }
 
 export function cleanText(text) {
@@ -39,9 +42,9 @@ function generateChunkId(text, filename) {
  *  4. Paragraphs larger than MAX are split with a sliding window + overlap as fallback.
  */
 export function chunkText(text, options = {}) {
-  const targetChars  = (options.chunkSizeTokens || TARGET_CHUNK_TOKENS) * CHARS_PER_TOKEN;
-  const maxChars     = (options.maxChunkTokens  || MAX_CHUNK_TOKENS)    * CHARS_PER_TOKEN;
-  const overlapChars = (options.overlapTokens   || OVERLAP_TOKENS)      * CHARS_PER_TOKEN;
+  const targetTokens = options.chunkSizeTokens || TARGET_CHUNK_TOKENS;
+  const maxTokens    = options.maxChunkTokens  || MAX_CHUNK_TOKENS;
+  const overlapTk    = options.overlapTokens   || OVERLAP_TOKENS;
 
   if (!text || typeof text !== 'string') return [];
 
@@ -56,6 +59,8 @@ export function chunkText(text, options = {}) {
   let   bufStart   = 0;
   let   chunkIndex = 0;
   let   charCursor = 0;
+
+  const textDecoder = new TextDecoder();
 
   const flush = (forceText) => {
     const content = (forceText ?? buffer).trim();
@@ -73,37 +78,32 @@ export function chunkText(text, options = {}) {
   };
 
   for (const para of rawParas) {
-    const isHeading = HEADING_RE.test(para.split('\n')[0]);
+    const isHeading  = HEADING_RE.test(para.split('\n')[0]);
+    const paraTokens = estimateTokens(para);
 
     // 2. Heading always starts a new chunk
     if (isHeading && buffer.length > 0) flush();
 
-    if (para.length > maxChars) {
-      // 3. Oversized paragraph -> sliding-window fallback
+    if (paraTokens > maxTokens) {
+      // 3. Oversized paragraph -> sliding-window token fallback
       if (buffer.length > 0) flush();
 
+      const tokens = encoder.encode(para);
       let s = 0;
-      while (s < para.length) {
-        let e = s + targetChars;
-        if (e < para.length) {
-          const searchFrom = e - Math.floor(targetChars * 0.2);
-          for (const bp of ['. ', '.\n', '? ', '! ', '\n']) {
-            const idx = para.lastIndexOf(bp, e);
-            if (idx > searchFrom) { e = idx + bp.length; break; }
-          }
-        }
-        e = Math.min(e, para.length);
-        const slice = para.slice(s, e).trim();
+      while (s < tokens.length) {
+        const e     = Math.min(s + targetTokens, tokens.length);
+        const slice = textDecoder.decode(encoder.decode(tokens.slice(s, e))).trim();
+
         if (slice.length >= MIN_CHUNK_CHARS) {
           chunks.push({
             text:       slice,
-            tokenCount: estimateTokens(slice),
-            charStart:  charCursor + s,
-            charEnd:    charCursor + e,
+            tokenCount: e - s,
+            charStart:  charCursor,
+            charEnd:    charCursor + slice.length,
             chunkIndex: chunkIndex++
           });
         }
-        const next = e - overlapChars;
+        const next = e - overlapTk;
         s = next > s ? next : e;
       }
       charCursor += para.length + 2;
@@ -111,15 +111,19 @@ export function chunkText(text, options = {}) {
       continue;
     }
 
-    // 4. Normal paragraph - accumulate until target
-    const tentative = buffer ? buffer + '\n\n' + para : para;
-    if (tentative.length > targetChars && buffer.length > 0) flush();
+    // 4. Normal paragraph — hard cap lookahead before accumulating
+    const currentBufferTokens = estimateTokens(buffer);
+    if (currentBufferTokens + paraTokens > maxTokens && buffer.length > 0) {
+      flush();
+    }
 
     buffer     = buffer ? buffer + '\n\n' + para : para;
     charCursor += para.length + 2;
 
-    // Hard cap guard: flush immediately if a single para alone hits the max
-    if (buffer.length >= maxChars) flush();
+    // Soft cap: flush once target is reached
+    if (estimateTokens(buffer) >= targetTokens) {
+      flush();
+    }
   }
 
   // 5. Flush remainder
