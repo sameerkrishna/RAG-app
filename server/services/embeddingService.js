@@ -2,7 +2,6 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { VertexAI } from '@google-cloud/vertexai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
-let genAI = null;
 let embeddingModel = null;
 
 const PROJECT_ID = 'project-d48e2f39-2685-4746-aa0';
@@ -12,7 +11,6 @@ const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
 
 function getEmbeddingModel() {
   if (!embeddingModel) {
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     embeddingModel = vertexAI.getGenerativeModel({
       model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
     });
