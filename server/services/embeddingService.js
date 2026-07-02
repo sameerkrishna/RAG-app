@@ -1,15 +1,18 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 
-let genAI = null;
+let ai = null;
 let embeddingModel = null;
 
 function getEmbeddingModel() {
   if (!embeddingModel) {
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    embeddingModel = genAI.getGenerativeModel({
-      model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
+    ai = new GoogleGenAI({
+      vertexai: true,
+      project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
     });
+
+    embeddingModel = ai.models;
   }
   return embeddingModel;
 }
@@ -29,23 +32,31 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   try {
     const model = getEmbeddingModel();
 
-    const result = await model.batchEmbedContents({
-      requests: texts.map(text => ({
-        model: `models/${modelName}`,
-        content: { parts: [{ text }] },
-        taskType,
-        outputDimensionality: OUTPUT_DIMENSIONS()
-      }))
+    const embeddingPromises = texts.map(async (text) => {
+      const response = await model.embedContent({
+        model: modelName,
+        contents: text,
+        config: {
+          taskType,
+          outputDimensionality: OUTPUT_DIMENSIONS()
+        }
+      });
+
+      const values = response?.embedding?.values;
+      if (!values) {
+        throw new EmbeddingError('Missing values in embedding response');
+      }
+
+      return values;
     });
 
-    if (!result?.embeddings || result.embeddings.length !== texts.length) {
-      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${result?.embeddings?.length ?? 0}`);
+    const embeddings = await Promise.all(embeddingPromises);
+
+    if (embeddings.length !== texts.length) {
+      throw new EmbeddingError(`Expected ${texts.length} embeddings, got ${embeddings.length}`);
     }
 
-    return result.embeddings.map(e => {
-      if (!e?.values) throw new EmbeddingError('Missing values in embedding response');
-      return e.values;
-    });
+    return embeddings;
 
   } catch (error) {
     const is429 = is429Error(error) ||
