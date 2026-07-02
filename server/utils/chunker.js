@@ -88,11 +88,12 @@ export function chunkText(text, options = {}) {
       // 3. Oversized paragraph -> sliding-window token fallback
       if (buffer.length > 0) flush();
 
-      const tokens = encoder.encode(para);
+      // Uint8Array required by js-tiktoken encode/decode
+      const tokens = new Uint8Array(encoder.encode(para));
       let s = 0;
       while (s < tokens.length) {
         const e     = Math.min(s + targetTokens, tokens.length);
-        const slice = textDecoder.decode(encoder.decode(tokens.slice(s, e))).trim();
+        const slice = textDecoder.decode(encoder.decode(new Uint8Array(tokens.slice(s, e)))).trim();
 
         if (slice.length >= MIN_CHUNK_CHARS) {
           chunks.push({
