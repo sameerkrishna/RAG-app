@@ -5,9 +5,6 @@ import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types
 const STORAGE_KEY = 'rag_conversations';
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
-// Module-level flags — live in JS memory only.
-// Reset to false on hard reload/new tab (module re-executes).
-// Survive SPA navigation (module scope stays alive).
 let _isNavigationBack = false;
 
 export function markNavigationToKB() {
@@ -50,8 +47,6 @@ export function deleteConversation(id: string) {
 }
 
 function getInitialConversationState(): { messages: ChatMessage[]; activeConvId: string | null } {
-  // Do NOT consume the flag here — StrictMode mounts twice, flag must survive both mounts.
-  // Flag is only reset explicitly via resetNavigationFlag() when user starts a new conversation.
   if (!_isNavigationBack) {
     return { messages: [], activeConvId: null };
   }
@@ -72,6 +67,7 @@ export function useChat(sessionId: string) {
 
   const [messages, setMessages] = useState<ChatMessage[]>(initialState.messages);
   const [isLoading, setIsLoading] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeConvId, setActiveConvId] = useState<string | null>(initialState.activeConvId);
 
@@ -98,6 +94,9 @@ export function useChat(sessionId: string) {
   }, []);
 
   const sendMessage = useCallback(async (query: string, waitFor?: Promise<any>) => {
+    // Wait for session seeding BEFORE showing any UI — prevents phantom Thinking... state
+    if (waitFor) await waitFor;
+
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
 
@@ -128,12 +127,11 @@ export function useChat(sessionId: string) {
 
     setError(null);
     setIsLoading(true);
+    setIsThinking(true);
 
     abortControllerRef.current = new AbortController();
 
     try {
-      if (waitFor) await waitFor;
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -177,6 +175,8 @@ export function useChat(sessionId: string) {
               const payload = JSON.parse(data);
 
               if (currentEventName === 'token' && payload.text) {
+                // First token — stop showing thinking dots
+                setIsThinking(false);
                 const words = payload.text.split(/(\s+)/);
                 let i = 0;
                 while (i < words.length) {
@@ -191,6 +191,7 @@ export function useChat(sessionId: string) {
                 }
 
               } else if (currentEventName === 'complete') {
+                setIsThinking(false);
                 citations = payload.citations || [];
                 coverage = payload.coverage;
                 sources = payload.sources || [];
@@ -207,6 +208,7 @@ export function useChat(sessionId: string) {
                 });
 
               } else if (currentEventName === 'error') {
+                setIsThinking(false);
                 setError(payload.message);
                 setMessages(prev => prev.map(m =>
                   m.id === assistantMessageId ? { ...m, content: payload.message, isStreaming: false } : m
@@ -246,6 +248,7 @@ export function useChat(sessionId: string) {
           : m
       ));
     } finally {
+      setIsThinking(false);
       setIsLoading(false);
       abortControllerRef.current = null;
     }
@@ -253,6 +256,7 @@ export function useChat(sessionId: string) {
 
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
+    setIsThinking(false);
     setIsLoading(false);
   }, []);
 
@@ -261,6 +265,7 @@ export function useChat(sessionId: string) {
     restoredConvIdRef.current = null;
     setMessages([]);
     setError(null);
+    setIsThinking(false);
     setActiveConvId(null);
   }, []);
 
@@ -289,5 +294,5 @@ export function useChat(sessionId: string) {
     }
   }, [sessionId]);
 
-  return { messages, isLoading, error, activeConvId, sendMessage, cancel, clearMessages, loadConversation };
+  return { messages, isLoading, isThinking, error, activeConvId, sendMessage, cancel, clearMessages, loadConversation };
 }

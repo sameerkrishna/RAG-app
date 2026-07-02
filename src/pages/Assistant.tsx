@@ -29,20 +29,20 @@ function getGreeting(): string {
 
 export default function Assistant({ sessionId }: AssistantProps) {
   const navigate = useNavigate();
-  const { messages, isLoading, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
+  const { messages, isLoading, isThinking, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
   const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversations, setConversations] = useState<StoredConversation[]>(() => getAllConversations());
+  const [isSeeding, setIsSeeding] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
 
-  // On mount: restore conversation if navigating back from KB
   useEffect(() => {
     if (activeConvId) {
       const conv = getAllConversations().find(c => c.id === activeConvId);
@@ -73,10 +73,18 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
     console.log('[session] Firing session/init for', sessionId);
     initedSessions.add(sessionId);
+    // Only set isSeeding on genuine first load — initedSessions guard above
+    // ensures this branch never runs on remounts or KB navigation.
+    setIsSeeding(true);
     sessionInitRef.current = fetch('/api/session/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
-    }).catch(err => console.warn('Session pre-init failed:', err.message));
+    })
+      .then(() => setIsSeeding(false))
+      .catch(err => {
+        console.warn('Session pre-init failed:', err.message);
+        setIsSeeding(false);
+      });
   }, [sessionId]);
 
   const isFirstMessage = messages.length === 0;
@@ -87,7 +95,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || isSeeding) return;
     sendMessage(input.trim(), sessionInitRef.current ?? undefined);
     setInput('');
   };
@@ -253,23 +261,34 @@ export default function Assistant({ sessionId }: AssistantProps) {
                 {getGreeting()} 👋
               </h1>
               <form onSubmit={handleSubmit} className="w-full max-w-2xl">
-                <div className="relative flex items-center gap-2 rounded-2xl border bg-background shadow-md px-4 py-3">
+                <div className={cn(
+                  'relative flex items-center gap-2 rounded-2xl border bg-background shadow-md px-4 py-3 transition-opacity',
+                  isSeeding && 'opacity-70'
+                )}>
                   <input
                     ref={inputRef}
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    placeholder="Ask me anything..."
+                    placeholder={isSeeding ? 'Setting up things...' : 'Ask me anything...'}
                     className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                    disabled={isSeeding}
                     autoFocus
                   />
-                  <Button type="submit" disabled={!input.trim() || isLoading} size="icon" className="h-8 w-8 rounded-xl flex-shrink-0">
+                  <Button type="submit" disabled={!input.trim() || isLoading || isSeeding} size="icon" className="h-8 w-8 rounded-xl flex-shrink-0">
                     <Send className="h-4 w-4" />
                   </Button>
                 </div>
-                <p className="mt-2 text-center text-[11px] text-muted-foreground/60">
-                  AI-generated responses may be inaccurate. Verify important information.
-                </p>
+                {isSeeding ? (
+                  <p className="mt-2 text-center text-[11px] text-muted-foreground/70 flex items-center justify-center gap-1.5">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                    Setting up things...
+                  </p>
+                ) : (
+                  <p className="mt-2 text-center text-[11px] text-muted-foreground/60">
+                    AI-generated responses may be inaccurate. Verify important information.
+                  </p>
+                )}
               </form>
             </div>
           ) : (
@@ -289,7 +308,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
                     />
                   ))}
 
-                  {isLoading && messages[messages.length - 1]?.role === 'user' && (
+                  {isThinking && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                       <span className="inline-flex gap-1">
                         <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '0ms' }} />
