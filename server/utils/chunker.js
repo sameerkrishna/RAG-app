@@ -1,9 +1,6 @@
 import { createHash } from 'crypto';
-import { getEncoding } from 'js-tiktoken';
 
-// Instantiate a standard token decoder matching OpenAI cl100k_base models
-const encoder = getEncoding('cl100k_base');
-
+const CHARS_PER_TOKEN     = 4;
 const TARGET_CHUNK_TOKENS = 600;   // soft target per chunk
 const MAX_CHUNK_TOKENS    = 750;   // hard cap before forced split
 const OVERLAP_TOKENS      = 100;   // overlap only on oversized paragraphs
@@ -14,7 +11,7 @@ const HEADING_RE = /^(?:[A-Z][A-Z\s]{2,60}$|#{1,4}\s.+|(?:\d+\.)+\s.+)/m;
 
 export function estimateTokens(text) {
   if (!text || typeof text !== 'string') return 0;
-  return encoder.encode(text).length;
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 export function cleanText(text) {
@@ -46,6 +43,10 @@ export function chunkText(text, options = {}) {
   const maxTokens    = options.maxChunkTokens  || MAX_CHUNK_TOKENS;
   const overlapTk    = options.overlapTokens   || OVERLAP_TOKENS;
 
+  const targetChars  = targetTokens * CHARS_PER_TOKEN;
+  const maxChars     = maxTokens    * CHARS_PER_TOKEN;
+  const overlapChars = overlapTk    * CHARS_PER_TOKEN;
+
   if (!text || typeof text !== 'string') return [];
 
   // 1. Split into paragraphs
@@ -59,8 +60,6 @@ export function chunkText(text, options = {}) {
   let   bufStart   = 0;
   let   chunkIndex = 0;
   let   charCursor = 0;
-
-  const textDecoder = new TextDecoder();
 
   const flush = (forceText) => {
     const content = (forceText ?? buffer).trim();
@@ -78,33 +77,37 @@ export function chunkText(text, options = {}) {
   };
 
   for (const para of rawParas) {
-    const isHeading  = HEADING_RE.test(para.split('\n')[0]);
-    const paraTokens = estimateTokens(para);
+    const isHeading = HEADING_RE.test(para.split('\n')[0]);
 
     // 2. Heading always starts a new chunk
     if (isHeading && buffer.length > 0) flush();
 
-    if (paraTokens > maxTokens) {
-      // 3. Oversized paragraph -> sliding-window token fallback
+    if (para.length > maxChars) {
+      // 3. Oversized paragraph -> sliding-window char fallback
       if (buffer.length > 0) flush();
 
-      // Uint8Array required by js-tiktoken encode/decode
-      const tokens = new Uint8Array(encoder.encode(para));
       let s = 0;
-      while (s < tokens.length) {
-        const e     = Math.min(s + targetTokens, tokens.length);
-        const slice = textDecoder.decode(encoder.decode(new Uint8Array(tokens.slice(s, e)))).trim();
-
+      while (s < para.length) {
+        let e = s + targetChars;
+        if (e < para.length) {
+          const searchFrom = e - Math.floor(targetChars * 0.2);
+          for (const bp of ['. ', '.\n', '? ', '! ', '\n']) {
+            const idx = para.lastIndexOf(bp, e);
+            if (idx > searchFrom) { e = idx + bp.length; break; }
+          }
+        }
+        e = Math.min(e, para.length);
+        const slice = para.slice(s, e).trim();
         if (slice.length >= MIN_CHUNK_CHARS) {
           chunks.push({
             text:       slice,
-            tokenCount: e - s,
-            charStart:  charCursor,
-            charEnd:    charCursor + slice.length,
+            tokenCount: estimateTokens(slice),
+            charStart:  charCursor + s,
+            charEnd:    charCursor + e,
             chunkIndex: chunkIndex++
           });
         }
-        const next = e - overlapTk;
+        const next = e - overlapChars;
         s = next > s ? next : e;
       }
       charCursor += para.length + 2;
@@ -112,9 +115,8 @@ export function chunkText(text, options = {}) {
       continue;
     }
 
-    // 4. Normal paragraph — hard cap lookahead before accumulating
-    const currentBufferTokens = estimateTokens(buffer);
-    if (currentBufferTokens + paraTokens > maxTokens && buffer.length > 0) {
+    // 4. Normal paragraph — hard cap lookahead BEFORE accumulating
+    if (buffer.length > 0 && (buffer.length + para.length + 2) > maxChars) {
       flush();
     }
 
@@ -122,7 +124,7 @@ export function chunkText(text, options = {}) {
     charCursor += para.length + 2;
 
     // Soft cap: flush once target is reached
-    if (estimateTokens(buffer) >= targetTokens) {
+    if (buffer.length >= targetChars) {
       flush();
     }
   }
