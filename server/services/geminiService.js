@@ -10,7 +10,7 @@ function getGenAI() {
       vertexai: true,
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
       // CRITICAL: Vertex AI requires a valid regional endpoint (e.g., 'us-central1'), NOT 'global'
-      location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1' 
+      location: process.env.GOOGLE_CLOUD_LOCATION || 'global' 
     });
   }
   return genAI;
