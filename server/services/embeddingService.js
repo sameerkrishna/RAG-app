@@ -13,7 +13,7 @@ const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
 function getEmbeddingModel() {
   if (!embeddingModel) {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    embeddingModel = genAI.getGenerativeModel({
+    embeddingModel = vertexAI.getGenerativeModel({
       model: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'
     });
   }
