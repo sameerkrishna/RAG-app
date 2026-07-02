@@ -14,7 +14,6 @@ interface KnowledgeBaseProps {
 const MAX_UPLOAD_SIZE_MB = 5;
 const MAX_PDFS = 3;
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
 function DocumentSkeleton() {
   return (
     <div className="space-y-2 animate-pulse">
@@ -31,7 +30,6 @@ function DocumentSkeleton() {
   );
 }
 
-// ── Custom delete confirmation modal ─────────────────────────────────────────
 interface DeleteModalProps {
   doc: Document;
   onCancel: () => void;
@@ -44,21 +42,17 @@ function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
   const handleConfirm = async () => {
     setDeleting(true);
     await onConfirm();
-    // parent sets confirmDoc(null) after onConfirm resolves → modal unmounts
   };
 
   return (
-    // Backdrop — click to dismiss (disabled while deleting)
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={deleting ? undefined : onCancel}
     >
-      {/* Panel */}
       <div
         className="relative mx-4 w-full max-w-sm rounded-2xl border bg-card p-6 shadow-xl"
         onClick={e => e.stopPropagation()}
       >
-        {/* Close button */}
         {!deleting && (
           <button
             onClick={onCancel}
@@ -69,7 +63,6 @@ function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
           </button>
         )}
 
-        {/* Icon */}
         <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
           <Trash2 className="h-5 w-5 text-destructive" />
         </div>
@@ -81,12 +74,7 @@ function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
         </p>
 
         <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCancel}
-            disabled={deleting}
-          >
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={deleting}>
             Cancel
           </Button>
           <Button
@@ -108,39 +96,39 @@ function DeleteModal({ doc, onCancel, onConfirm }: DeleteModalProps) {
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
   const {
     documents,
+    globalDocuments,
     uploadState,
     uploadDocument,
     deleteDocument,
-    resetUploadState
-  } = useDocuments(); // Note: sessionId is ignored by the hook but was passed previously
-
-  // Provide a safe fallback since useDocuments doesn't return globalDocuments
-  const globalDocuments: Document[] = [];
+    resetUploadState,
+  } = useDocuments(sessionId);
 
   const { isSeeding } = useSeeding();
-  const [dragOver, setDragOver]         = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileError, setFileError]       = useState<string | null>(null);
-  const [confirmDoc, setConfirmDoc]     = useState<Document | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [confirmDoc, setConfirmDoc] = useState<Document | null>(null);
 
-  // Live counters — driven directly by documents.length (session uploads only)
   const sessionUploaded = documents.length;
-  const remaining       = MAX_PDFS - sessionUploaded;
+  const remaining = MAX_PDFS - sessionUploaded;
+  const allDocuments = [...documents, ...globalDocuments];
 
   const handleFileSelect = (file: File) => {
     setFileError(null);
+
     if (file.type !== 'application/pdf') {
       setFileError('Only PDF files are supported.');
       return;
     }
+
     if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
       setFileError(`File exceeds ${MAX_UPLOAD_SIZE_MB}MB limit.`);
       return;
     }
+
     setSelectedFile(file);
   };
 
@@ -150,34 +138,37 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     if (result) setSelectedFile(null);
   };
 
-  const handleDragOver  = (e: React.DragEvent) => { e.preventDefault(); setDragOver(true); };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
   const handleDragLeave = () => setDragOver(false);
-  const handleDrop      = (e: React.DragEvent) => {
-    e.preventDefault(); setDragOver(false);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
   };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file);
   };
 
-  // Called by DeleteModal after the user confirms
   const handleDeleteConfirmed = async () => {
     if (!confirmDoc) return;
     await deleteDocument(confirmDoc.document_id, confirmDoc.filename);
-    setConfirmDoc(null); // closes modal
+    setConfirmDoc(null);
   };
 
-  // ── Upload progress renderer ──────────────────────────────────────────────
   const renderUploadState = () => {
     const { status } = uploadState;
 
-    // Nothing to show when idle
     if (status === 'idle') return null;
 
-    // Complete state
-    if (status === 'complete' || status === 'done') {
+    if (status === 'done') {
       return (
         <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
           <CheckCircle className="h-4 w-4" />
@@ -186,33 +177,41 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
       );
     }
 
-    // Error state
     if (status === 'error') {
       return (
         <div className="flex items-center gap-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4" />
-          {uploadState.error}
-          <Button variant="outline" size="sm" onClick={resetUploadState}>Retry</Button>
+          <span>{uploadState.error}</span>
+          <Button variant="outline" size="sm" onClick={resetUploadState}>
+            Retry
+          </Button>
         </div>
       );
     }
 
-    // ── Active states: uploading | upload_complete | indexing ──────────────
-    // Derive green bar values
-    const stateAny = uploadState as any;
-    const uploadPct = typeof stateAny.uploadProgress === 'number' ? stateAny.uploadProgress : 0;
-    const lengthComputable = stateAny.uploadLengthComputable !== false;
-    const uploadFinished = status === 'upload_complete' || status === 'indexing';
+    const uploadPct =
+      status === 'uploading' || status === 'upload_complete' || status === 'indexing'
+        ? uploadState.uploadProgress ?? 0
+        : 0;
 
-    // Derive blue bar values
+    const lengthComputable =
+      status === 'uploading'
+        ? uploadState.uploadLengthComputable !== false
+        : true;
+
+    const uploadFinished = status === 'upload_complete' || status === 'indexing';
     const isIndexing = status === 'indexing';
-    const processed = isIndexing ? stateAny.processedChunks : 0;
-    const total = isIndexing ? stateAny.totalChunks : 0;
-    const indexPct = isIndexing ? stateAny.indexingProgress : 0;
+    const processed = isIndexing ? uploadState.processedChunks : 0;
+    const total =
+      status === 'upload_complete'
+        ? uploadState.totalChunks
+        : isIndexing
+        ? uploadState.totalChunks
+        : 0;
+    const indexPct = isIndexing ? uploadState.indexingProgress : 0;
 
     return (
       <div className="space-y-3">
-        {/* ── Green bar: file upload bytes ── */}
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
@@ -225,6 +224,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 : 'sending…'}
             </span>
           </div>
+
           <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
             {lengthComputable || uploadFinished ? (
               <div
@@ -237,7 +237,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
           </div>
         </div>
 
-        {/* ── Blue bar: chunking & embedding ── */}
         {(status === 'upload_complete' || isIndexing) && (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
@@ -248,9 +247,10 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
               <span>
                 {isIndexing
                   ? `${processed} / ${total} chunks — ${indexPct}%`
-                  : 'starting…'}
+                  : `0 / ${total} chunks — 0%`}
               </span>
             </div>
+
             <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-2 rounded-full bg-primary transition-all duration-300"
@@ -263,15 +263,14 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     );
   };
 
-  const allDocuments = [...documents, ...globalDocuments];
-
-  // ── Document list ─────────────────────────────────────────────────────────
   const renderDocuments = () => {
     if (isSeeding && allDocuments.length === 0) {
       return (
         <section className="space-y-3">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Indexed Documents</h2>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              Indexed Documents
+            </h2>
             <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading knowledge base...
@@ -287,17 +286,23 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         <div className="rounded-xl border bg-card py-16 text-center">
           <Upload className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
           <h3 className="mb-2 text-lg font-medium">Empty Knowledge Base</h3>
-          <p className="mb-4 text-sm text-muted-foreground">Upload PDF documents to start asking questions</p>
-          <p className="text-xs text-muted-foreground">Or add seed documents to the seed_documents/ folder</p>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Upload PDF documents to start asking questions
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Or add seed documents to the seed_documents/ folder
+          </p>
         </div>
       );
     }
 
     return (
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Indexed Documents</h2>
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Indexed Documents
+        </h2>
         <div className="grid gap-2">
-          {allDocuments.map(doc => (
+          {allDocuments.map((doc) => (
             <div
               key={doc.document_id}
               className="flex items-start justify-between rounded-xl border bg-card p-4 transition-colors hover:bg-accent/30"
@@ -310,7 +315,9 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                     <span>{doc.chunk_count} chunks</span>
                     <span>{doc.page_count} pages</span>
                     {doc.source_type === 'seed' && (
-                      <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">Seed</span>
+                      <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary uppercase">
+                        Seed
+                      </span>
                     )}
                     {doc.upload_timestamp && (
                       <span>Uploaded {formatTimestamp(doc.upload_timestamp)}</span>
@@ -318,6 +325,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                   </div>
                 </div>
               </div>
+
               {doc.source_type !== 'seed' && (
                 <Button
                   variant="ghost"
@@ -337,8 +345,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
-
-      {/* Delete confirmation modal */}
       {confirmDoc && (
         <DeleteModal
           doc={confirmDoc}
@@ -347,7 +353,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         />
       )}
 
-      {/* Header */}
       <header className="flex h-14 flex-shrink-0 items-center justify-between border-b bg-background px-6">
         <div className="flex items-center gap-3">
           <Link
@@ -366,31 +371,25 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-6">
-
-          {/* Upload section */}
           {documents.length < MAX_PDFS && (
             <section className="rounded-xl border bg-card p-6">
-
-              {/* Live counter row */}
               <div className="mb-4 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">
                   {sessionUploaded === 0
                     ? 'No session files uploaded'
                     : `${sessionUploaded} session file${sessionUploaded !== 1 ? 's' : ''} uploaded`}
                 </span>
-                <span className={`text-xs font-medium ${
-                  remaining === 1
-                    ? 'text-orange-500 dark:text-orange-400'
-                    : 'text-muted-foreground'
-                }`}>
+                <span
+                  className={`text-xs font-medium ${
+                    remaining === 1 ? 'text-orange-500 dark:text-orange-400' : 'text-muted-foreground'
+                  }`}
+                >
                   {remaining} more file upload{remaining !== 1 ? 's' : ''} allowed
                 </span>
               </div>
 
-              {/* Drop zone */}
               <div
                 className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
                   dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/20'
@@ -403,7 +402,13 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 <p className="mb-4 text-sm text-muted-foreground">
                   Drag and drop a PDF here, or click to browse
                 </p>
-                <input type="file" accept=".pdf" onChange={handleInputChange} className="hidden" id="file-upload" />
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleInputChange}
+                  className="hidden"
+                  id="file-upload"
+                />
                 <label htmlFor="file-upload" className="cursor-pointer">
                   <span className="inline-flex h-10 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
                     Browse Files
@@ -414,7 +419,6 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </p>
               </div>
 
-              {/* Validation error */}
               {fileError && (
                 <div className="mt-3 flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
                   <AlertCircle className="h-4 w-4 shrink-0" />
@@ -425,25 +429,29 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                 </div>
               )}
 
-              {/* Selected file row */}
               {selectedFile && (
                 <div className="mt-4 rounded-lg bg-secondary/50 p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <FileIcon className="h-4 w-4" />
                       <span className="text-sm">{selectedFile.name}</span>
-                      <span className="text-xs text-muted-foreground">({formatBytes(selectedFile.size)})</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({formatBytes(selectedFile.size)})
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button size="sm" onClick={handleUpload} disabled={uploadState.status !== 'idle'}>Upload</Button>
-                      <Button variant="outline" size="sm" onClick={() => setSelectedFile(null)}>Cancel</Button>
+                      <Button size="sm" onClick={handleUpload} disabled={uploadState.status !== 'idle'}>
+                        Upload
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setSelectedFile(null)}>
+                        Cancel
+                      </Button>
                     </div>
                   </div>
                   <div className="mt-3">{renderUploadState()}</div>
                 </div>
               )}
 
-              {/* Keep progress visible after file row clears (indexing phase) */}
               {!selectedFile && uploadState.status !== 'idle' && (
                 <div className="mt-3">{renderUploadState()}</div>
               )}
@@ -453,7 +461,9 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
           {documents.length >= MAX_PDFS && (
             <div className="flex items-center gap-2 rounded-lg bg-warning/10 p-4 text-warning-foreground">
               <AlertCircle className="h-4 w-4" />
-              <span className="text-sm">Maximum {MAX_PDFS} PDF uploads reached. Delete existing uploads to add more.</span>
+              <span className="text-sm">
+                Maximum {MAX_PDFS} PDF uploads reached. Delete existing uploads to add more.
+              </span>
             </div>
           )}
 
