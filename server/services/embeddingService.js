@@ -24,7 +24,7 @@ const GROUP_WAIT_MS  = 61000;
 const RETRY_WAIT_MS  = 15000;
 
 // Embed a single batch of texts (up to BATCH_SIZE).
-// Retries on 429 up to 5 times. Used by both generateEmbeddings and handleUpload.
+// Retries on 429 and transient 502/503 errors up to 5 times.
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const maxAttempts = 5;
   const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
@@ -32,8 +32,15 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   try {
     const model = getEmbeddingModel();
 
-    const embeddingPromises = texts.map(async (text) => {
-      const response = await ai.models.embedContent({
+    const embeddingPromises = texts.map(async (rawText) => {
+      // Coerce safely to string to prevent API input validation failures
+      const text = typeof rawText === 'string' ? rawText : String(rawText);
+      
+      if (!text || text.trim() === '') {
+        throw new EmbeddingError('Cannot embed an empty or missing text block');
+      }
+
+      const response = await model.embedContent({
         model: modelName,
         contents: text,
         config: {
@@ -42,8 +49,13 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
         }
       });
 
-      const values = response?.embedding?.values;
+      // Handle structural variations in the SDK response payload
+      const values = response?.embeddings?.[0]?.values || 
+                     response?.embedding?.values || 
+                     response?.values;
+
       if (!values) {
+        console.error('[embedding] Unexpected API response shape:', JSON.stringify(response));
         throw new EmbeddingError('Missing values in embedding response');
       }
 
@@ -59,13 +71,21 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
     return embeddings;
 
   } catch (error) {
-    const is429 = is429Error(error) ||
+    // Retry on rate limits (429) as well as temporary gateway/service disruptions (502, 503)
+    const isRetryable = is429Error(error) ||
       error?.status === 429 ||
-      error?.message?.includes('RESOURCE_EXHAUSTED');
+      error?.status === 502 ||
+      error?.status === 503 ||
+      error?.message?.includes('RESOURCE_EXHAUSTED') ||
+      error?.message?.includes('Service Unavailable') ||
+      error?.message?.includes('Bad Gateway');
 
-    if (is429 && attempt < maxAttempts) {
-      const retryDelay = error.retryAfter || GROUP_WAIT_MS;
-      console.log(`[embedding] Rate limited, waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
+    if (isRetryable && attempt < maxAttempts) {
+      // Scale wait dynamically if it's a structural gateway error
+      const baseDelay = error.retryAfter || (attempt * RETRY_WAIT_MS);
+      const retryDelay = error?.status === 429 ? GROUP_WAIT_MS : baseDelay;
+
+      console.log(`[embedding] Transient error (${error?.status || 'unknown'}), waiting ${retryDelay / 1000}s (attempt ${attempt}/${maxAttempts})...`);
       await new Promise(resolve => setTimeout(resolve, retryDelay));
       return embedBatch(texts, taskType, attempt + 1);
     }
