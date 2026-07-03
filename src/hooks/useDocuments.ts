@@ -16,8 +16,8 @@ export function useDocuments(sessionId: string) {
 
     setLoading(true);
     let retries = 0;
-    const MAX_RETRIES = 8;          // More retries
-    const BASE_DELAY = 1000;        // 2 seconds
+    const MAX_RETRIES = 10;          // More retries
+    const BASE_DELAY = 2000;        // 2 seconds
 
     const attemptFetch = async (): Promise<void> => {
       try {
@@ -42,10 +42,9 @@ export function useDocuments(sessionId: string) {
         // ❌ No data – retry (if under limit)
         if (retries < MAX_RETRIES) {
           retries++;
-          // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s (capped)
-          const delay = Math.min(BASE_DELAY * Math.pow(2, retries - 1), 60000);
+          const delay = BASE_DELAY;
           console.log(
-            `[useDocuments] Empty response, retry ${retries}/${MAX_RETRIES} in ${delay/1000}s...`
+            `[useDocuments] Empty response, retry ${retries}/${MAX_RETRIES} in ${delay / 1000}s...`
           );
           setTimeout(attemptFetch, delay);
           // Keep loading = true
@@ -60,9 +59,9 @@ export function useDocuments(sessionId: string) {
         console.error('[useDocuments] Fetch error:', error);
         if (retries < MAX_RETRIES) {
           retries++;
-          const delay = Math.min(BASE_DELAY * Math.pow(2, retries - 1), 60000);
+          const delay = Math.min(BASE_DELAY * (retries - 1), 60000);
           console.log(
-            `[useDocuments] Error, retry ${retries}/${MAX_RETRIES} in ${delay/1000}s...`
+            `[useDocuments] Error, retry ${retries}/${MAX_RETRIES} in ${delay / 1000}s...`
           );
           setTimeout(attemptFetch, delay);
         } else {
