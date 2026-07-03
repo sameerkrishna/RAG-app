@@ -104,7 +104,7 @@ async function parsePDFWithBoundaryMap(filePath) {
 
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart < entry.end) return entry.page;
+    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
 }
@@ -119,17 +119,17 @@ export async function handleUpload(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const BATCH_SIZE     = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
-  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
-  const GROUP_WAIT_MS  = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS)   || 61000;
+  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
+  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
+  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 5;
 
   try {
     const file = req.file;
     if (!file) throw new InvalidFileTypeError();
 
-    const sessionId     = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
-    const session       = getOrCreateSession(sessionId);
-    const maxPDFs       = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
+    const sessionId = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
+    const session = getOrCreateSession(sessionId);
+    const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
     const cleanFilename = sanitizeFilename(file.originalname);
 
     const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
@@ -156,7 +156,7 @@ export async function handleUpload(req, res) {
 
     const documentId = uuidv4();
     // Use chunker defaults (TARGET=600, MAX=750, OVERLAP=100) — do NOT pass overrides
-    const rawChunks  = chunkText(fullText);
+    const rawChunks = chunkText(fullText);
 
     if (rawChunks.length === 0) {
       fs.unlinkSync(file.path);
@@ -167,24 +167,24 @@ export async function handleUpload(req, res) {
     const chunks = rawChunks.map((chunk, idx) => ({
       text: chunk.text,
       metadata: {
-        document_id:      documentId,
-        filename:         cleanFilename,
-        chunk_id:         createHash('md5').update(`${cleanFilename}::${chunk.text}`).digest('hex').slice(0, 16),
-        chunk_index:      idx,
-        total_chunks:     rawChunks.length,
-        page_number:      getPageNumber(chunk.charStart, pageMap),
-        total_pages:      totalPages,
-        source_type:      'session_upload',
+        document_id: documentId,
+        filename: cleanFilename,
+        chunk_id: createHash('md5').update(`${cleanFilename}::${chunk.text}`).digest('hex').slice(0, 16),
+        chunk_index: idx,
+        total_chunks: rawChunks.length,
+        page_number: getPageNumber(chunk.charStart, pageMap),
+        total_pages: totalPages,
+        source_type: 'session_upload',
         upload_timestamp: new Date().toISOString(),
-        char_start:       chunk.charStart,
-        char_end:         chunk.charEnd,
-        token_count:      chunk.tokenCount
+        char_start: chunk.charStart,
+        char_end: chunk.charEnd,
+        token_count: chunk.tokenCount
       }
     }));
 
-    const totalChunks  = chunks.length;
+    const totalChunks = chunks.length;
     const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-    const totalSets    = Math.ceil(totalBatches / PARALLEL_CALLS);
+    const totalSets = Math.ceil(totalBatches / PARALLEL_CALLS);
 
     console.log(`[upload] [${sessionId}] ${totalChunks} chunks → ${totalBatches} API calls → ${totalSets} sets of ${PARALLEL_CALLS} parallel`);
 
@@ -201,8 +201,8 @@ export async function handleUpload(req, res) {
     console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
 
     const { collection } = await getSessionCollection(sessionId);
-    let processedChunks  = 0;
-    const allEmbeddings  = [];
+    let processedChunks = 0;
+    const allEmbeddings = [];
 
     const batches = [];
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) batches.push(chunks.slice(i, i + BATCH_SIZE));
@@ -213,8 +213,8 @@ export async function handleUpload(req, res) {
     console.log(`[upload] [${sessionId}] Phase 2 start — ${sets.length} sets`);
 
     for (let setIdx = 0; setIdx < sets.length; setIdx++) {
-      const isLastSet     = setIdx === sets.length - 1;
-      const currentSet    = sets[setIdx];
+      const isLastSet = setIdx === sets.length - 1;
+      const currentSet = sets[setIdx];
       const setChunkCount = currentSet.reduce((acc, b) => acc + b.length, 0);
 
       console.log(`[upload] [${sessionId}] Set ${setIdx + 1}/${sets.length} — embedding ${currentSet.length} batch call(s) (${setChunkCount} chunks) in parallel`);
@@ -229,10 +229,10 @@ export async function handleUpload(req, res) {
         if (result.status === 'fulfilled') {
           result.value.forEach((vector, chunkIdx) => {
             setEmbeddings.push({
-              id:        batch[chunkIdx].metadata.chunk_id,
+              id: batch[chunkIdx].metadata.chunk_id,
               embedding: vector,
-              metadata:  batch[chunkIdx].metadata,
-              text:      batch[chunkIdx].text
+              metadata: batch[chunkIdx].metadata,
+              text: batch[chunkIdx].text
             });
           });
           console.log(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} embedded OK (${batch.length} chunks)`);
@@ -255,7 +255,7 @@ export async function handleUpload(req, res) {
           setEmbeddings.map(e => e.embedding),
           setEmbeddings.map(e => e.id)
         ).then(() => console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`))
-        .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
+          .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
 
         sseEvent(res, 'embedding_progress', {
           processedChunks, totalChunks,
@@ -305,7 +305,7 @@ export async function handleUpload(req, res) {
 
   } catch (error) {
     if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch {}
+      try { fs.unlinkSync(req.file.path); } catch { }
     }
     console.error('[upload] Unhandled error:', error);
     sseEvent(res, 'error', { message: error.message || 'Upload failed', code: error.code || 'UPLOAD_ERROR' });
@@ -385,7 +385,7 @@ export async function getDocumentFile(req, res) {
 
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
-        const match   = allPdfs.find(f => f.includes(path.parse(filename).name));
+        const match = allPdfs.find(f => f.includes(path.parse(filename).name));
         if (match) {
           const matchPath = path.join(seedDir, match);
           res.setHeader('Content-Type', 'application/pdf');
