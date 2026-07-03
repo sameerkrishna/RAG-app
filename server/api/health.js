@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { healthCheck as chromaHealthCheck } from '../services/chromaService.js';
-import { getRateLimitState } from '../services/embeddingService.js';
 
 const router = Router();
 
@@ -21,9 +20,6 @@ export async function health(req, res) {
       error: error.message
     };
   }
-
-  // Get rate limit state
-  healthStatus.rateLimit = getRateLimitState();
 
   // Overall status
   const hasErrors = Object.values(healthStatus.services).some(
