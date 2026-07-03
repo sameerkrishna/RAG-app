@@ -40,8 +40,8 @@ export async function handleChatStream(req, res) {
   }
 
   const sessionId = providedSessionId || uuidv4();
-  const convId    = providedConvId || uuidv4();
-  const answerId  = uuidv4();
+  const convId = providedConvId || uuidv4();
+  const answerId = uuidv4();
 
   getOrCreateSession(sessionId);
 
@@ -109,15 +109,18 @@ export async function handleChatStream(req, res) {
     }
 
     const questions = filteredTurns.filter(t => t.role === 'user');
-    const answers   = filteredTurns.filter(t => t.role === 'assistant');
-    const qSection  = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
-    const aSection  = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
+    const answers = filteredTurns.filter(t => t.role === 'assistant');
+    const qSection = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
+    const aSection = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
     const memoryContext = filteredTurns.length > 0
       ? `Previous Questions:\n${qSection}\n\nPrevious Answers:\n${aSection}`
       : '';
 
-    const prompt = `You are an AI Knowledge Assistant. Your behaviour depends on the type of input:
+    const systemPrompt = `
 
+    ##SYSTEM INSTURCTIONS:
+    #ROLE: You are an AI Knowledge Assistant. Your behaviour must depend on the type of input.
+#RULES:
 1. GREETINGS & SMALL TALK (hi, hello, how are you, do you have a life, jokes, general chat):
    - Respond warmly and naturally. Do NOT mention the knowledge base or documents at all.
    - Do NOT add any citations.
@@ -130,19 +133,19 @@ export async function handleChatStream(req, res) {
 3. FACTUAL QUESTIONS WITHOUT CONTEXT (context is empty or irrelevant):
    - Politely decline in your own words — vary your phrasing naturally.
    - Do NOT add citations.
-   - Do NOT use a fixed template or robotic response.
+   - Do NOT use a fixed template or robotic response.`;
 
-CONTEXT:
+  const userPrompt = `#CONTEXT:
 ${contextText || '(No relevant documents found in knowledge base)'}
 
-CONVERSATION HISTORY:
+#CONVERSATION HISTORY:
 ${memoryContext || '(No previous conversation)'}
 
-CURRENT QUESTION: ${query}`;
+#TASK: Answer the following query as per the System instructions and refer to the CONTEXT and CONVERSATION HISTORY : ${query}`;
 
     let fullResponse = '';
 
-    for await (const chunk of streamResponse(prompt)) {
+    for await (const chunk of streamResponse(systemPrompt, userPrompt)) {
       if (chunk.type === 'token') {
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
@@ -180,21 +183,21 @@ CURRENT QUESTION: ${query}`;
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : matchedCitations
-          .map(c => ({ ...c, index: indexMap.get(c.index) }))
-          .filter(c => c.index !== undefined)
-          .sort((a, b) => a.index - b.index);
+        .map(c => ({ ...c, index: indexMap.get(c.index) }))
+        .filter(c => c.index !== undefined)
+        .sort((a, b) => a.index - b.index);
 
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : sources
-          .filter(s => matchedChunkIds.has(s.chunkId))
-          .sort((a, b) => {
-            const idxA = finalCitations.find(c => c.chunkId === a.chunkId)?.index ?? 99;
-            const idxB = finalCitations.find(c => c.chunkId === b.chunkId)?.index ?? 99;
-            return idxA - idxB;
-          });
+        .filter(s => matchedChunkIds.has(s.chunkId))
+        .sort((a, b) => {
+          const idxA = finalCitations.find(c => c.chunkId === a.chunkId)?.index ?? 99;
+          const idxB = finalCitations.find(c => c.chunkId === b.chunkId)?.index ?? 99;
+          return idxA - idxB;
+        });
 
     addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
