@@ -104,7 +104,7 @@ async function parsePDFWithBoundaryMap(filePath) {
 
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart < entry.end) return entry.page;
+    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
 }
