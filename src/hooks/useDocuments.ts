@@ -2,10 +2,10 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Document, UploadState } from '../types';
 
 export function useDocuments(sessionId: string) {
-  const [documents, setDocuments] = useState < Document[] > ([]);
-  const [globalDocuments, setGlobalDocuments] = useState < Document[] > ([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploadState, setUploadState] = useState < UploadState > ({ status: 'idle' });
+  const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
 
   // ─── Fetch with intelligent retry ──────────────────────────────────────
   const fetchDocuments = useCallback(async () => {
@@ -45,7 +45,7 @@ export function useDocuments(sessionId: string) {
           // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s (capped)
           const delay = Math.min(BASE_DELAY * Math.pow(2, retries - 1), 60000);
           console.log(
-            `[useDocuments] Empty response, retry ${retries}/${MAX_RETRIES} in ${delay / 1000}s...`
+            `[useDocuments] Empty response, retry ${retries}/${MAX_RETRIES} in ${delay/1000}s...`
           );
           setTimeout(attemptFetch, delay);
           // Keep loading = true
@@ -62,7 +62,7 @@ export function useDocuments(sessionId: string) {
           retries++;
           const delay = Math.min(BASE_DELAY * Math.pow(2, retries - 1), 60000);
           console.log(
-            `[useDocuments] Error, retry ${retries}/${MAX_RETRIES} in ${delay / 1000}s...`
+            `[useDocuments] Error, retry ${retries}/${MAX_RETRIES} in ${delay/1000}s...`
           );
           setTimeout(attemptFetch, delay);
         } else {
