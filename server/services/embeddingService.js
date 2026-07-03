@@ -279,3 +279,11 @@ export async function embedQuery(query) {
   const vectors = await embedBatch([query], 'RETRIEVAL_QUERY');
   return vectors[0];
 }
+
+export async function embedSingleBatchGroup(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  console.log(`[embedding] embedSingleBatchGroup — ${texts.length} texts, taskType=${taskType}`);
+  await RATE_LIMITER.consume(estimateTokensForTexts(texts));
+  const vectors = await embedBatch(texts, taskType);
+  console.log(`[embedding] embedSingleBatchGroup — got ${vectors.length} vectors`);
+  return vectors;
+}
