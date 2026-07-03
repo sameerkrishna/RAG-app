@@ -20,7 +20,7 @@ export function createSession(sessionId) {
     createdAt: new Date(),
     lastAccessed: new Date(),
     documents: [],
-    deletedDocumentIds: new Set(),   // track deleted doc IDs to filter prompt memory
+    deletedDocumentIds: new Set(),
     timeoutMinutes: DEFAULT_TIMEOUT_MINUTES
   };
   sessions.set(id, session);
@@ -59,6 +59,29 @@ export function deleteSession(sessionId) {
   seededSessions.delete(sessionId);
 }
 
+// ─── Check if session is seeded ────────────────────────────────────────────
+export function isSessionSeeded(sessionId) {
+  return seededSessions.has(sessionId);
+}
+
+// ─── Notify SSE listeners ──────────────────────────────────────────────────
+function notifySeedingComplete(sessionId) {
+  if (global.seedingListeners && global.seedingListeners.has(`seeding:${sessionId}`)) {
+    const eventKey = `seeding:${sessionId}`;
+    const listeners = global.seedingListeners.get(eventKey) || [];
+    listeners.forEach((response) => {
+      try {
+        response.write(`event: seeding_complete\ndata: ${JSON.stringify({ sessionId, seeded: true })}\n\n`);
+        response.end();
+      } catch (err) {
+        console.error(`[notify] Failed to notify listener:`, err.message);
+      }
+    });
+    global.seedingListeners.delete(eventKey);
+    console.log(`[notify] Notified ${listeners.length} SSE listeners for session ${sessionId}`);
+  }
+}
+
 /**
  * On session start:
  * - If collection is NEW → seed from global (paginated, 300/batch)
@@ -68,6 +91,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
   console.log(`🔑 Session init: ${sessionId}`);
   if (seededSessions.has(sessionId)) {
     console.log(`[session] Already seeded ${sessionId}, skipping`);
+    notifySeedingComplete(sessionId);
     return;
   }
 
@@ -94,6 +118,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
         console.log(`✅ Reconstructed ${docs.length} document(s) for session ${sessionId}`);
       }
       seededSessions.add(sessionId);
+      notifySeedingComplete(sessionId);
       return;
     }
 
@@ -121,6 +146,7 @@ export async function initSessionWithGlobalDocs(sessionId) {
     if (allIds.length === 0) {
       console.log('⚠️  Global collection is empty — nothing to seed.');
       seededSessions.add(sessionId);
+      notifySeedingComplete(sessionId);
       return;
     }
 
@@ -162,16 +188,16 @@ export async function initSessionWithGlobalDocs(sessionId) {
       }
     }
 
+    notifySeedingComplete(sessionId);
+
   } catch (error) {
     console.error(`❌ Failed to seed session ${sessionId}:`, error.message);
+    // Still notify listeners so they don't hang forever
+    notifySeedingComplete(sessionId);
   }
 }
 
-/**
- * Upsert a document into the session.
- * If a doc with the same id already exists, update it in place (no duplicate).
- * Supports partial updates — only provided fields overwrite existing values.
- */
+// ─── Document management ────────────────────────────────────────────────────
 export function addDocumentToSession(sessionId, documentInfo) {
   const session = getSession(sessionId);
   if (!session) return false;
@@ -247,7 +273,6 @@ export function removeDocumentFromSession(sessionId, documentId) {
   const idx = session.documents.findIndex(d => d.id === documentId);
   if (idx >= 0) {
     session.documents.splice(idx, 1);
-    // Track deleted doc so its memory turns are excluded from future prompts
     session.deletedDocumentIds.add(documentId);
     session.lastAccessed = new Date();
     console.log(`[session] Removed doc ${documentId}, added to deletedDocumentIds`);
