@@ -190,7 +190,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
                 className="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                 title="About this app"
               >
-                <Info className="h-6 w-6" />
+                <Info className="h-3.5 w-3.5" />
               </button>
             </div>
           )}
@@ -200,7 +200,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
               className="flex w-full items-center justify-center rounded-lg px-0 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               title="About this app"
             >
-              <Info className="h-4 w-4" />
+              <Info className="h-10 w-10" />
             </button>
           )}
           <button
