@@ -47,15 +47,14 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     uploadState,
     uploadDocument,
     deleteDocument,
-    resetUploadState,
-    loading,               // <-- ADDED
+    resetUploadState
   } = useDocuments(sessionId);
 
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);   // <-- ADDED
 
   const sessionUploads = documents.filter(d => d.source_type === 'session_upload');
   const uploadedCount = sessionUploads.length;
@@ -108,6 +107,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     setDeleteTarget(doc);
   };
 
+  // MODIFIED confirmDelete to show loader while deleting
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
@@ -170,8 +170,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                   <span>Files uploaded: <span className="font-semibold text-foreground">{uploadedCount}</span></span>
                 </div>
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${remainingUploads === 1
-                  ? 'bg-amber-500/10 text-amber-600'
-                  : 'bg-primary/10 text-primary'
+                    ? 'bg-amber-500/10 text-amber-600'
+                    : 'bg-primary/10 text-primary'
                   }`}>
                   {remainingUploads} upload{remainingUploads !== 1 ? 's' : ''} remaining
                 </span>
@@ -254,8 +254,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
                           {isUploading && 'Uploading...'}
                           {uploadState.status === 'upload_complete' && 'Starting indexing...'}
                           {uploadState.status === 'indexing' && `Indexing set ${uploadState.setIndex} of ${uploadState.totalSets}${uploadState.totalSets > 1 && uploadState.setIndex < uploadState.totalSets
-                            ? ' (waiting for rate limit after this set)'
-                            : ''
+                              ? ' (waiting for rate limit after this set)'
+                              : ''
                             }`}
                         </span></>
                     )}
@@ -289,15 +289,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
             </div>
           )}
 
-          {/* Documents List — with loader while loading */}
-          {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="text-center space-y-3">
-                <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">Initializing Seed Knowledge…</p>
-              </div>
-            </div>
-          ) : allDocuments.length === 0 ? (
+          {/* Documents List */}
+          {allDocuments.length === 0 ? (
             <div className="rounded-xl border bg-card py-16 text-center">
               <Upload className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
               <h3 className="mb-2 text-lg font-medium">Empty Knowledge Base</h3>
@@ -362,7 +355,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
         </div>
       </main>
 
-      {/* Delete confirmation modal */}
+      {/* Delete confirmation modal — updated buttons */}
       {deleteTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { Document, UploadState } from '../types';
 
 export function useDocuments(sessionId: string) {
@@ -76,80 +76,9 @@ export function useDocuments(sessionId: string) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-
-      const sessionDocs = data.sessionDocuments || [];
-      const globalDocs = data.globalDocuments || [];
-      const hasData = sessionDocs.length > 0 || globalDocs.length > 0;
-
-      if (hasData && mountedRef.current) {
-        // ✅ Data ready – update and stop
-        updateDocuments(sessionDocs, globalDocs);
-        isFetchingRef.current = false;
-        console.log('[useDocuments] Data ready, loaded directly.');
-        return;
-      }
-
-      // ❌ No data – connect to SSE to wait for seeding
-      if (mountedRef.current) {
-        console.log('[useDocuments] No data, connecting to SSE...');
-        const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
-        eventSourceRef.current = new EventSource(url);
-        sseConnectedRef.current = true;
-
-        // ─── Listen for seeding_complete event ──────────────────────────────
-        const onSeedingComplete = (event: any) => {
-          if (!mountedRef.current) return;
-          try {
-            const data = JSON.parse(event.data);
-            console.log('[useDocuments] ✅ Seeding complete!', data);
-            closeSSE();
-            // Re-fetch documents (but don't show loader again)
-            isFetchingRef.current = false;
-            fetchDocuments(false);
-          } catch (error) {
-            console.error('[useDocuments] Failed to parse SSE event:', error);
-          }
-        };
-
-        // ─── Listen for error events ─────────────────────────────────────────
-        const onError = (event: any) => {
-          if (!mountedRef.current) return;
-          console.error('[useDocuments] SSE error:', event);
-          closeSSE();
-          // Fallback: try direct fetch after 2 seconds
-          setTimeout(() => {
-            if (mountedRef.current && !dataLoadedRef.current) {
-              console.log('[useDocuments] SSE failed, trying direct fetch...');
-              isFetchingRef.current = false;
-              fetchDocuments(false);
-            }
-          }, 2000);
-        };
-
-        // ─── Listen for open event ───────────────────────────────────────────
-        const onOpen = () => {
-          if (mountedRef.current) {
-            console.log('[useDocuments] SSE connection opened');
-          }
-        };
-
-        eventSourceRef.current.addEventListener('seeding_complete', onSeedingComplete);
-        eventSourceRef.current.addEventListener('error', onError);
-        eventSourceRef.current.onopen = onOpen;
-
-        // Safety timeout: if SSE doesn't respond in 20 seconds, try direct fetch
-        timeoutIdRef.current = setTimeout(() => {
-          if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
-            console.log('[useDocuments] SSE timeout, trying direct fetch...');
-            closeSSE();
-            isFetchingRef.current = false;
-            fetchDocuments(false);
-          }
-        }, 20000) as unknown as number;
-      }
-
-      isFetchingRef.current = false;
-
+      console.log('[useDocuments] fetchDocuments — session:', data.sessionDocuments?.length, 'global:', data.globalDocuments?.length);
+      setDocuments(data.sessionDocuments || []);
+      setGlobalDocuments(data.globalDocuments || []);
     } catch (error) {
       console.error('[useDocuments] Fetch error:', error);
 
@@ -209,14 +138,17 @@ export function useDocuments(sessionId: string) {
         isFetchingRef.current = false;
       }
     }
-  }, [sessionId]);
+  }, [sessionId, closeSSE, updateDocuments]);
 
-  // Fetch on mount / when sessionId changes
+  // ─── Initial fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
+    // Only run once per sessionId
+    if (initDoneRef.current && sessionId) return;
+    initDoneRef.current = true;
+    dataLoadedRef.current = false;
+    fetchDocuments(true);
+  }, [sessionId, fetchDocuments]);
 
-  // ─── Upload document ────────────────────────────────────────────────────────
   const uploadDocument = useCallback(async (file: File) => {
     console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
     setUploadState({ status: 'uploading', uploadProgress: 0 });
@@ -239,6 +171,8 @@ export function useDocuments(sessionId: string) {
         return null;
       }
 
+      console.log('[useDocuments] SSE stream opened, reading events...');
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -247,7 +181,10 @@ export function useDocuments(sessionId: string) {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log('[useDocuments] SSE stream closed');
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -258,10 +195,12 @@ export function useDocuments(sessionId: string) {
             currentEvent = line.slice(7).trim();
             continue;
           }
+
           if (line.startsWith('data: ')) {
             const rawData = line.slice(6);
             try {
               const payload = JSON.parse(rawData);
+              console.log(`[useDocuments] SSE event: ${currentEvent}`, payload);
 
               if (currentEvent === 'upload_complete') {
                 setUploadState({
@@ -271,6 +210,7 @@ export function useDocuments(sessionId: string) {
                   totalSets: payload.totalSets,
                   uploadProgress: 100
                 });
+
                 const newDoc: Document = {
                   document_id: payload.documentId,
                   filename: payload.filename,
@@ -282,15 +222,19 @@ export function useDocuments(sessionId: string) {
                   status: 'indexing'
                 };
                 setDocuments(prev => {
-                  if (prev.some(d => d.document_id === payload.documentId)) {
+                  const alreadyExists = prev.some(d => d.document_id === payload.documentId);
+                  if (alreadyExists) {
+                    console.log(`[useDocuments] Doc ${payload.documentId} already in list — updating status to indexing`);
                     return prev.map(d =>
                       d.document_id === payload.documentId
                         ? { ...d, status: 'indexing' as const }
                         : d
                     );
                   }
+                  console.log(`[useDocuments] Doc ${payload.filename} optimistically added as indexing`);
                   return [newDoc, ...prev];
                 });
+
               } else if (currentEvent === 'embedding_progress') {
                 const indexingProgress = Math.round((payload.processedChunks / payload.totalChunks) * 100);
                 setUploadState({
@@ -301,25 +245,22 @@ export function useDocuments(sessionId: string) {
                   totalSets: payload.totalSets,
                   indexingProgress
                 });
+
               } else if (currentEvent === 'done') {
                 result = payload;
+                console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename} — ${payload.document.chunkCount} chunks indexed`);
                 setUploadState({ status: 'done', documentId: payload.document.documentId });
-                setDocuments(prev =>
-                  prev.map(d =>
-                    d.document_id === payload.document.documentId
-                      ? { ...d, chunk_count: payload.document.chunkCount, status: 'ready' as const }
-                      : d
-                  )
-                );
-                // Refresh the list after upload (force re-fetch)
-                dataLoadedRef.current = false;
-                isFetchingRef.current = false;
-                fetchDocuments(true);
+                await fetchDocuments();
                 setTimeout(() => setUploadState({ status: 'idle' }), 3000);
+
               } else if (currentEvent === 'error') {
-                console.error('[useDocuments] Server error:', payload);
-                setUploadState({ status: 'error', error: payload.message || 'Upload failed' });
+                console.error(`[useDocuments] Server error event:`, payload);
+                setUploadState({
+                  status: 'error',
+                  error: payload.message || 'Upload failed'
+                });
               }
+
               currentEvent = '';
             } catch (e) {
               console.warn('[useDocuments] Failed to parse SSE data:', rawData);
@@ -327,15 +268,19 @@ export function useDocuments(sessionId: string) {
           }
         }
       }
+
       return result;
+
     } catch (error: any) {
       console.error('[useDocuments] Upload fetch error:', error);
-      setUploadState({ status: 'error', error: error.message || 'Upload failed' });
+      setUploadState({
+        status: 'error',
+        error: error.message || 'Upload failed'
+      });
       return null;
     }
   }, [sessionId, fetchDocuments]);
 
-  // ─── Delete document ────────────────────────────────────────────────────────
   const deleteDocument = useCallback(async (documentId: string, filename: string) => {
     try {
       const response = await fetch(`/api/documents/${documentId}?filename=${encodeURIComponent(filename)}`, {
@@ -343,26 +288,17 @@ export function useDocuments(sessionId: string) {
         headers: { 'x-session-id': sessionId }
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setDocuments(prev => prev.filter(d => d.document_id !== documentId));
+      await fetchDocuments();
       return true;
     } catch (error) {
       console.error('[useDocuments] Failed to delete document:', error);
       return false;
     }
-  }, [sessionId]);
+  }, [sessionId, fetchDocuments]);
 
-  // ─── Reset upload state ────────────────────────────────────────────────────
   const resetUploadState = useCallback(() => {
     setUploadState({ status: 'idle' });
   }, []);
-
-  // ─── Manual refresh ────────────────────────────────────────────────────────
-  const refreshDocuments = useCallback(() => {
-    closeSSE();
-    dataLoadedRef.current = false;
-    isFetchingRef.current = false;
-    fetchDocuments(true);
-  }, [closeSSE, fetchDocuments]);
 
   return {
     documents,
@@ -372,6 +308,6 @@ export function useDocuments(sessionId: string) {
     uploadDocument,
     deleteDocument,
     resetUploadState,
-    refreshDocuments
+    refreshDocuments: fetchDocuments
   };
 }
