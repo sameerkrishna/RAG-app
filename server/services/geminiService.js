@@ -50,35 +50,6 @@ function buildGenerationRequest(model, prompt) {
   };
 }
 
-export async function generateResponse(prompt) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
-  try {
-    const result = await getGenAI().models.generateContent(
-      buildGenerationRequest(getPrimaryModelName(), prompt),
-      { signal: controller.signal }
-    );
-
-    clearTimeout(timeoutId);
-    return getTextFromResponse(result);
-  } catch (primaryError) {
-    clearTimeout(timeoutId);
-    console.error('Primary model failed:', primaryError.message);
-
-    try {
-      const fallbackResult = await getGenAI().models.generateContent(
-        buildGenerationRequest(getFallbackModelName(), prompt)
-      );
-
-      return getTextFromResponse(fallbackResult);
-    } catch (fallbackError) {
-      console.error('Fallback model also failed:', fallbackError.message);
-      throw new LLMUnavailableError();
-    }
-  }
-}
-
 export async function* streamResponse(prompt) {
   let modelName = getPrimaryModelName();
   let retries = 0;
