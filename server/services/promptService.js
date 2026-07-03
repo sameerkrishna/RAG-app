@@ -30,17 +30,6 @@ export function buildPrompt({ query, context, memoryContext, coverage }) {
   return parts.join('');
 }
 
-export function buildStreamingPrompt(query, retrievedResults, sessionId, memoryService) {
-  const memoryContext = formatMemoryForPrompt(sessionId);
-  const contextString = formatContextForPrompt(retrievedResults);
-  return buildPrompt({
-    query,
-    context: contextString,
-    memoryContext,
-    coverage: calculateCoverage(retrievedResults)
-  });
-}
-
 export function getRefusalResponse() {
   // No longer used — LLM generates its own natural refusal
   return null;
