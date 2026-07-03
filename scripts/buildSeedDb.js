@@ -54,7 +54,7 @@ async function parsePDF(filePath) {
 
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart < entry.end) return entry.page;
+    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
 }
@@ -103,7 +103,7 @@ async function buildSeedDatabase() {
 
   if (!fs.existsSync(SEED_DIR)) {
     fs.mkdirSync(SEED_DIR, { recursive: true });
-    console.log('\nCreated seed_documents/ \u2014 add PDFs and run again.');
+    console.log('\nCreated seed_documents/ — add PDFs and run again.');
     return;
   }
 
@@ -146,7 +146,7 @@ async function buildSeedDatabase() {
     try {
       ({ fullText, pageMap, totalPages } = await parsePDF(pdfFile));
     } catch (err) {
-      console.error(`  \u274c Failed to parse PDF: ${err.message}`);
+      console.error(`  ❌ Failed to parse PDF: ${err.message}`);
       docsSkipped++;
       continue;
     }
@@ -154,14 +154,18 @@ async function buildSeedDatabase() {
     console.log(`  - Pages: ${totalPages}`);
 
     if (!fullText || fullText.trim().length < 50) {
-      console.log(`  \u274c No extractable text \u2014 likely a fully scanned PDF. Skipping.`);
+      console.log(`  ❌ No extractable text — likely a fully scanned PDF. Skipping.`);
       docsSkipped++;
       continue;
     }
 
     const documentId = uuidv4();
 
-    const rawChunks = chunkText(fullText, { chunkSizeTokens: 1000, overlapTokens: 200 });
+    const rawChunks = chunkText(fullText, {
+      targetTokens: 600,
+      maxTokens: 750,
+      overlapTk: 100
+    });
 
     const chunks = rawChunks.map((chunk, idx) => {
       const pageNumber = getPageNumber(chunk.charStart, pageMap);
@@ -192,7 +196,7 @@ async function buildSeedDatabase() {
     console.log(`  - Generated ${chunks.length} chunks (page numbers from boundary map)`);
 
     if (chunks.length === 0) {
-      console.log(`  \u274c No chunks generated. Skipping.`);
+      console.log(`  ❌ No chunks generated. Skipping.`);
       docsSkipped++;
       continue;
     }
@@ -208,22 +212,29 @@ async function buildSeedDatabase() {
     );
 
     if (embeddings.length === 0) {
-      console.log(`  \u274c No embeddings generated. Skipping upload.`);
+      console.log(`  ❌ No embeddings generated. Skipping upload.`);
       docsSkipped++;
       continue;
     }
 
+    // 🔥 FIX 2: Wrap ChromaDB upload in try/catch so a single failure
+    // does not crash the entire batch of 10–20 PDFs.
     console.log(`  - Uploading ${embeddings.length} vectors to ChromaDB...`);
-    await addVectors(
-      collection,
-      embeddings.map(e => ({ text: e.text, metadata: e.metadata })),
-      embeddings.map(e => e.embedding),
-      embeddings.map(e => e.id)
-    );
-
-    console.log(`  \u2705 Uploaded ${embeddings.length} vectors for: ${filename}`);
-    docsProcessed++;
-    totalChunksUploaded += embeddings.length;
+    try {
+      await addVectors(
+        collection,
+        embeddings.map(e => ({ text: e.text, metadata: e.metadata })),
+        embeddings.map(e => e.embedding),
+        embeddings.map(e => e.id)
+      );
+      console.log(`  ✅ Uploaded ${embeddings.length} vectors for: ${filename}`);
+      docsProcessed++;
+      totalChunksUploaded += embeddings.length;
+    } catch (uploadErr) {
+      console.error(`  ❌ ChromaDB upload failed for ${filename}:`, uploadErr.message);
+      docsSkipped++;
+      // File remains unprocessed – next run will retry it
+    }
   }
 
   const afterCount = await collection.count();
@@ -232,7 +243,7 @@ async function buildSeedDatabase() {
   console.log(`Documents processed:   ${docsProcessed}/${pdfFiles.length}`);
   console.log(`Documents skipped:     ${docsSkipped}`);
   console.log(`Total chunks uploaded: ${totalChunksUploaded}`);
-  console.log(`Collection vectors:    ${beforeCount} \u2192 ${afterCount}`);
+  console.log(`Collection vectors:    ${beforeCount} → ${afterCount}`);
 }
 
 buildSeedDatabase()
