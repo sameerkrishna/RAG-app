@@ -8,6 +8,15 @@ export function useDocuments(sessionId: string) {
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
 
   const fetchDocuments = useCallback(async () => {
+    // If no sessionId, we can't fetch – set loading false and bail
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
+
+    // Set loading to true EVERY TIME we fetch, not just on mount
+    setLoading(true);
+
     try {
       const response = await fetch('/api/documents', {
         headers: { 'x-session-id': sessionId }
@@ -19,6 +28,10 @@ export function useDocuments(sessionId: string) {
       setGlobalDocuments(data.globalDocuments || []);
     } catch (error) {
       console.error('[useDocuments] Failed to fetch documents:', error);
+      // Optionally clear on error, or keep existing data – I'll keep existing to avoid flashing empty
+      // If you want to clear on error, uncomment:
+      // setDocuments([]);
+      // setGlobalDocuments([]);
     } finally {
       setLoading(false);
     }
