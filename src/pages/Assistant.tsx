@@ -345,8 +345,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
                     </Button>
                   )}
                 </form>
-                <div className="pb-2 text-left">
-                  <span className="mt-2 text-center text-[11px] font-bold text-muted-foreground/60">
+                <div className="pb-2 text-center">
+                  <span className="mt-2 text-left text-[11px] font-bold text-muted-foreground/60">
                     AI-generated responses may be inaccurate. Verify important information.
                   </span>
                 </div>
