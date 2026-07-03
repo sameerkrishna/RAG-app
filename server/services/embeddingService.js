@@ -9,62 +9,49 @@ class SlidingWindowRateLimiter {
     this.limitPerMinute = limitPerMinute;
     this.windowMs = 60000;
     this.requests = [];
-    this._lock = Promise.resolve(); // 🔒 Mutex lock for concurrency safety
   }
 
   async consume(tokens) {
-    // Acquire the lock – ensures only one consume runs at a time
-    let resolveLock;
-    const lockPromise = new Promise(resolve => { resolveLock = resolve; });
-    await this._lock;
-    this._lock = lockPromise;
+    const now = Date.now();
+    // Remove entries older than 60 seconds
+    this.requests = this.requests.filter(req => req.timestamp > now - this.windowMs);
 
-    try {
-      const now = Date.now();
-      // Remove entries older than 60 seconds
-      this.requests = this.requests.filter(req => req.timestamp > now - this.windowMs);
+    const currentTotal = this.requests.reduce((sum, req) => sum + req.tokens, 0);
 
-      const currentTotal = this.requests.reduce((sum, req) => sum + req.tokens, 0);
-
-      // If we have room, consume instantly (burst)
-      if (currentTotal + tokens <= this.limitPerMinute) {
-        this.requests.push({ timestamp: now, tokens });
-        return;
-      }
-
-      // Otherwise, wait until the oldest request expires (plus a small buffer)
-      const needed = tokens - (this.limitPerMinute - currentTotal);
-      let accumulatedExpired = 0;
-      let waitUntil = now + this.windowMs; // fallback
-
-      const sorted = [...this.requests].sort((a, b) => a.timestamp - b.timestamp);
-      for (const req of sorted) {
-        accumulatedExpired += req.tokens;
-        if (accumulatedExpired >= needed) {
-          // +10ms buffer to slide the window cleanly
-          waitUntil = req.timestamp + this.windowMs + 10;
-          break;
-        }
-      }
-
-      const delay = waitUntil - now;
-      if (delay > 0) {
-        console.log(
-          `[rate-limit] Window full (${currentTotal}/${this.limitPerMinute}). ` +
-          `Waiting ${(delay / 1000).toFixed(1)}s to send ${tokens} tokens...`
-        );
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-
-      // Record the consumption at the new time
-      this.requests.push({ timestamp: Date.now(), tokens });
-      // Cleanup again just in case
-      this.requests = this.requests.filter(req => req.timestamp > Date.now() - this.windowMs);
-
-    } finally {
-      // 🔓 Release the lock
-      resolveLock();
+    // If we have room, consume instantly (burst)
+    if (currentTotal + tokens <= this.limitPerMinute) {
+      this.requests.push({ timestamp: now, tokens });
+      return;
     }
+
+    // Otherwise, wait until the oldest request expires (plus a small buffer)
+    const needed = tokens - (this.limitPerMinute - currentTotal);
+    let accumulatedExpired = 0;
+    let waitUntil = now + this.windowMs; // fallback
+
+    const sorted = [...this.requests].sort((a, b) => a.timestamp - b.timestamp);
+    for (const req of sorted) {
+      accumulatedExpired += req.tokens;
+      if (accumulatedExpired >= needed) {
+        // +10ms buffer to slide the window cleanly
+        waitUntil = req.timestamp + this.windowMs + 10;
+        break;
+      }
+    }
+
+    const delay = waitUntil - now;
+    if (delay > 0) {
+      console.log(
+        `[rate-limit] Window full (${currentTotal}/${this.limitPerMinute}). ` +
+        `Waiting ${(delay / 1000).toFixed(1)}s to send ${tokens} tokens...`
+      );
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    // Record the consumption at the new time
+    this.requests.push({ timestamp: Date.now(), tokens });
+    // Cleanup again just in case
+    this.requests = this.requests.filter(req => req.timestamp > Date.now() - this.windowMs);
   }
 }
 

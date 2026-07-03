@@ -22,9 +22,7 @@ import {
   canAcceptUpload,
   addDocumentToSession,
   removeDocumentFromSession,
-  getAllDocuments,
-  initSessionWithGlobalDocs,
-  isSessionSeeded
+  getAllDocuments
 } from '../services/sessionService.js';
 import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
 import { clearMemory } from '../services/memoryService.js';
@@ -106,7 +104,7 @@ async function parsePDFWithBoundaryMap(filePath) {
 
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
+    if (charStart >= entry.start && charStart < entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
 }
@@ -121,17 +119,17 @@ export async function handleUpload(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
-  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
-  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 1;
+  const BATCH_SIZE     = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS)  || 4;
+  const GROUP_WAIT_MS  = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS)   || 61000;
 
   try {
     const file = req.file;
     if (!file) throw new InvalidFileTypeError();
 
-    const sessionId = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
-    const session = getOrCreateSession(sessionId);
-    const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
+    const sessionId     = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
+    const session       = getOrCreateSession(sessionId);
+    const maxPDFs       = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
     const cleanFilename = sanitizeFilename(file.originalname);
 
     const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
@@ -158,7 +156,7 @@ export async function handleUpload(req, res) {
 
     const documentId = uuidv4();
     // Use chunker defaults (TARGET=600, MAX=750, OVERLAP=100) — do NOT pass overrides
-    const rawChunks = chunkText(fullText);
+    const rawChunks  = chunkText(fullText);
 
     if (rawChunks.length === 0) {
       fs.unlinkSync(file.path);
@@ -169,24 +167,24 @@ export async function handleUpload(req, res) {
     const chunks = rawChunks.map((chunk, idx) => ({
       text: chunk.text,
       metadata: {
-        document_id: documentId,
-        filename: cleanFilename,
-        chunk_id: createHash('md5').update(`${cleanFilename}::${chunk.text}`).digest('hex').slice(0, 16),
-        chunk_index: idx,
-        total_chunks: rawChunks.length,
-        page_number: getPageNumber(chunk.charStart, pageMap),
-        total_pages: totalPages,
-        source_type: 'session_upload',
+        document_id:      documentId,
+        filename:         cleanFilename,
+        chunk_id:         createHash('md5').update(`${cleanFilename}::${chunk.text}`).digest('hex').slice(0, 16),
+        chunk_index:      idx,
+        total_chunks:     rawChunks.length,
+        page_number:      getPageNumber(chunk.charStart, pageMap),
+        total_pages:      totalPages,
+        source_type:      'session_upload',
         upload_timestamp: new Date().toISOString(),
-        char_start: chunk.charStart,
-        char_end: chunk.charEnd,
-        token_count: chunk.tokenCount
+        char_start:       chunk.charStart,
+        char_end:         chunk.charEnd,
+        token_count:      chunk.tokenCount
       }
     }));
 
-    const totalChunks = chunks.length;
+    const totalChunks  = chunks.length;
     const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-    const totalSets = Math.ceil(totalBatches / PARALLEL_CALLS);
+    const totalSets    = Math.ceil(totalBatches / PARALLEL_CALLS);
 
     console.log(`[upload] [${sessionId}] ${totalChunks} chunks → ${totalBatches} API calls → ${totalSets} sets of ${PARALLEL_CALLS} parallel`);
 
@@ -203,8 +201,8 @@ export async function handleUpload(req, res) {
     console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
 
     const { collection } = await getSessionCollection(sessionId);
-    let processedChunks = 0;
-    const allEmbeddings = [];
+    let processedChunks  = 0;
+    const allEmbeddings  = [];
 
     const batches = [];
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) batches.push(chunks.slice(i, i + BATCH_SIZE));
@@ -215,8 +213,8 @@ export async function handleUpload(req, res) {
     console.log(`[upload] [${sessionId}] Phase 2 start — ${sets.length} sets`);
 
     for (let setIdx = 0; setIdx < sets.length; setIdx++) {
-      const isLastSet = setIdx === sets.length - 1;
-      const currentSet = sets[setIdx];
+      const isLastSet     = setIdx === sets.length - 1;
+      const currentSet    = sets[setIdx];
       const setChunkCount = currentSet.reduce((acc, b) => acc + b.length, 0);
 
       console.log(`[upload] [${sessionId}] Set ${setIdx + 1}/${sets.length} — embedding ${currentSet.length} batch call(s) (${setChunkCount} chunks) in parallel`);
@@ -231,10 +229,10 @@ export async function handleUpload(req, res) {
         if (result.status === 'fulfilled') {
           result.value.forEach((vector, chunkIdx) => {
             setEmbeddings.push({
-              id: batch[chunkIdx].metadata.chunk_id,
+              id:        batch[chunkIdx].metadata.chunk_id,
               embedding: vector,
-              metadata: batch[chunkIdx].metadata,
-              text: batch[chunkIdx].text
+              metadata:  batch[chunkIdx].metadata,
+              text:      batch[chunkIdx].text
             });
           });
           console.log(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} embedded OK (${batch.length} chunks)`);
@@ -257,7 +255,7 @@ export async function handleUpload(req, res) {
           setEmbeddings.map(e => e.embedding),
           setEmbeddings.map(e => e.id)
         ).then(() => console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`))
-          .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
+        .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
 
         sseEvent(res, 'embedding_progress', {
           processedChunks, totalChunks,
@@ -307,7 +305,7 @@ export async function handleUpload(req, res) {
 
   } catch (error) {
     if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch { }
+      try { fs.unlinkSync(req.file.path); } catch {}
     }
     console.error('[upload] Unhandled error:', error);
     sseEvent(res, 'error', { message: error.message || 'Upload failed', code: error.code || 'UPLOAD_ERROR' });
@@ -315,74 +313,6 @@ export async function handleUpload(req, res) {
   }
 }
 
-// ─── SSE: Seeding status stream ─────────────────────────────────────────────
-export async function seedingStatusHandler(req, res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-
-  if (!sessionId) {
-    sseEvent(res, 'error', { message: 'Missing session ID', code: 'MISSING_SESSION' });
-    res.end();
-    return;
-  }
-
-  console.log(`[seeding-status] Client connected for session ${sessionId}`);
-
-  // Check if session is already seeded
-  const seeded = isSessionSeeded(sessionId);
-  if (seeded) {
-    console.log(`[seeding-status] Session ${sessionId} already seeded – returning immediately`);
-    sseEvent(res, 'seeding_complete', { sessionId, seeded: true });
-    res.end();
-    return;
-  }
-
-  // Create a listener for this session
-  const eventKey = `seeding:${sessionId}`;
-
-  // Store the listener so we can emit when seeding completes
-  if (!global.seedingListeners) {
-    global.seedingListeners = new Map();
-  }
-  if (!global.seedingListeners.has(eventKey)) {
-    global.seedingListeners.set(eventKey, []);
-  }
-  global.seedingListeners.get(eventKey).push(res);
-
-  // Clean up listener on client disconnect
-  req.on('close', () => {
-    const listeners = global.seedingListeners.get(eventKey) || [];
-    const idx = listeners.indexOf(res);
-    if (idx >= 0) {
-      listeners.splice(idx, 1);
-      console.log(`[seeding-status] Client disconnected for ${sessionId}`);
-    }
-    if (listeners.length === 0) {
-      global.seedingListeners.delete(eventKey);
-    }
-  });
-
-  // Start seeding in the background (if not already running)
-  try {
-    console.log(`[seeding-status] Triggering seeding for ${sessionId}...`);
-    await initSessionWithGlobalDocs(sessionId);
-    // The seeding function will notify listeners when complete
-  } catch (err) {
-    console.error(`[seeding-status] Seeding failed for ${sessionId}:`, err.message);
-    const listeners = global.seedingListeners.get(eventKey) || [];
-    listeners.forEach((response) => {
-      sseEvent(response, 'error', { message: err.message, code: 'SEED_FAILED' });
-      response.end();
-    });
-    global.seedingListeners.delete(eventKey);
-  }
-}
-
-// ─── List documents handler ──────────────────────────────────────────────────
 export async function listDocumentsHandler(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
   try {
@@ -395,7 +325,6 @@ export async function listDocumentsHandler(req, res) {
   }
 }
 
-// ─── Delete document ─────────────────────────────────────────────────────────
 export async function deleteDocument(req, res) {
   const { documentId } = req.params;
   const filename = req.query.filename;
@@ -435,7 +364,6 @@ export async function deleteDocument(req, res) {
   }
 }
 
-// ─── Get document file ──────────────────────────────────────────────────────
 export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
@@ -457,7 +385,7 @@ export async function getDocumentFile(req, res) {
 
       if (fs.existsSync(seedDir)) {
         const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
-        const match = allPdfs.find(f => f.includes(path.parse(filename).name));
+        const match   = allPdfs.find(f => f.includes(path.parse(filename).name));
         if (match) {
           const matchPath = path.join(seedDir, match);
           res.setHeader('Content-Type', 'application/pdf');
@@ -474,10 +402,8 @@ export async function getDocumentFile(req, res) {
   }
 }
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
 router.post('/upload', upload.single('file'), handleUpload);
 router.get('/', listDocumentsHandler);
-router.get('/seeding-status', seedingStatusHandler);
 router.delete('/:documentId', deleteDocument);
 router.get('/:documentId/file', getDocumentFile);
 
