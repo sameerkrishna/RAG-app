@@ -390,7 +390,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
       {/* Info Dialog */}
       {infoDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="relative w-full max-w-md mx-4 bg-background rounded-xl shadow-2xl border animate-in fade-in-0 zoom-in-95 duration-200">
+          <div className="relative w-full max-w-lg mx-4 bg-background rounded-xl shadow-2xl border animate-in fade-in-0 zoom-in-95 duration-200">
             <button
               onClick={() => setInfoDialogOpen(false)}
               className="absolute top-3 right-3 flex h-7 w-7 items-center justify-center rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
