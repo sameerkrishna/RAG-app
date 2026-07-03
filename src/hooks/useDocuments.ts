@@ -69,18 +69,8 @@ export function useDocuments(sessionId: string) {
       return;
     }
 
-    isFetchingRef.current = true;
-
-    // Only show loader on initial load or when explicitly refreshing
-    if (isInitial || !dataLoadedRef.current) {
-      setLoading(true);
-    }
-
-    // Close any existing SSE connection
-    closeSSE();
-
+    setLoading(true);
     try {
-      // Try direct fetch first
       const response = await fetch('/api/documents', {
         headers: { 'x-session-id': sessionId }
       });
@@ -219,16 +209,12 @@ export function useDocuments(sessionId: string) {
         isFetchingRef.current = false;
       }
     }
-  }, [sessionId, closeSSE, updateDocuments]);
+  }, [sessionId]);
 
-  // ─── Initial fetch ──────────────────────────────────────────────────────────
+  // Fetch on mount / when sessionId changes
   useEffect(() => {
-    // Only run once per sessionId
-    if (initDoneRef.current && sessionId) return;
-    initDoneRef.current = true;
-    dataLoadedRef.current = false;
-    fetchDocuments(true);
-  }, [sessionId, fetchDocuments]);
+    fetchDocuments();
+  }, [fetchDocuments]);
 
   // ─── Upload document ────────────────────────────────────────────────────────
   const uploadDocument = useCallback(async (file: File) => {
@@ -243,7 +229,7 @@ export function useDocuments(sessionId: string) {
       const response = await fetch('/api/documents/upload', {
         method: 'POST',
         headers: { 'x-session-id': sessionId },
-        body: formData
+        body: formData,
       });
 
       if (!response.ok || !response.body) {
