@@ -200,7 +200,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
               className="flex w-full items-center justify-center rounded-lg px-0 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               title="About this app"
             >
-              <Info className="h-10 w-10" />
+              <Info className="h-4 w-4" />
             </button>
           )}
           <button
