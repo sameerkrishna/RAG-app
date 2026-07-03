@@ -184,13 +184,13 @@ export default function Assistant({ sessionId }: AssistantProps) {
         <nav className="flex-1 overflow-y-auto p-2 space-y-1">
           {!sidebarCollapsed && (
             <div className="flex items-center justify-between px-2 pb-2 mb-2 border-b border-border/50">
-              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Actions</span>
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Info</span>
               <button
                 onClick={() => setInfoDialogOpen(true)}
                 className="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                 title="About this app"
               >
-                <Info className="h-3.5 w-3.5" />
+                <Info className="h-6 w-6" />
               </button>
             </div>
           )}
