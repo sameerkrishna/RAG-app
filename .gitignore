@@ -1,3 +1,3 @@
 node_modules
 .env
-google_credentials
+google_credentials/
