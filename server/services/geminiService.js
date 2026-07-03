@@ -1,5 +1,4 @@
 import { GoogleGenAI } from '@google/genai';
-import { buildPrompt, getRefusalResponse } from './promptService.js';
 import { LLMUnavailableError } from '../utils/errors.js';
 
 let genAI = null;
@@ -110,8 +109,4 @@ export async function* streamResponse(prompt) {
       modelName = getFallbackModelName();
     }
   }
-}
-
-export function getRefusalText() {
-  return getRefusalResponse();
 }
