@@ -47,7 +47,8 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
     uploadState,
     uploadDocument,
     deleteDocument,
-    resetUploadState
+    resetUploadState,
+    loading
   } = useDocuments(sessionId);
 
   const [dragOver, setDragOver] = useState(false);
