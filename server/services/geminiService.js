@@ -27,10 +27,6 @@ function getFallbackModelName() {
   return FALLBACK_MODEL;
 }
 
-function getTextFromResponse(result) {
-  return result?.text || result?.response?.text?.() || '';
-}
-
 function getTextFromChunk(chunk) {
   if (typeof chunk?.text === 'string') return chunk.text;
   if (typeof chunk?.text === 'function') return chunk.text();
