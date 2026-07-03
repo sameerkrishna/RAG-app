@@ -122,7 +122,7 @@ export async function handleUpload(req, res) {
 
   const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
   const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
-  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 5;
+  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 1;
 
   try {
     const file = req.file;
