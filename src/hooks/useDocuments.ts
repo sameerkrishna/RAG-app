@@ -6,15 +6,15 @@ export function useDocuments(sessionId: string) {
   const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
+  const [retryCount, setRetryCount] = useState(0);
 
   const fetchDocuments = useCallback(async () => {
-    // If no sessionId, we can't fetch – set loading false and bail
     if (!sessionId) {
       setLoading(false);
       return;
     }
 
-    // Set loading to true EVERY TIME we fetch, not just on mount
+    // Show loader immediately
     setLoading(true);
 
     try {
@@ -26,16 +26,26 @@ export function useDocuments(sessionId: string) {
       console.log('[useDocuments] fetchDocuments — session:', data.sessionDocuments?.length, 'global:', data.globalDocuments?.length);
       setDocuments(data.sessionDocuments || []);
       setGlobalDocuments(data.globalDocuments || []);
+      setRetryCount(0);           // Reset retry counter on success
+      setLoading(false);          // ✅ Success → hide loader
     } catch (error) {
       console.error('[useDocuments] Failed to fetch documents:', error);
-      // Optionally clear on error, or keep existing data – I'll keep existing to avoid flashing empty
-      // If you want to clear on error, uncomment:
-      // setDocuments([]);
-      // setGlobalDocuments([]);
-    } finally {
-      setLoading(false);
+
+      // Retry up to 2 more times (total of 3 attempts)
+      if (retryCount < 2) {
+        setRetryCount(prev => prev + 1);
+        console.log(`[useDocuments] Retrying fetch in 3s... (attempt ${retryCount + 1}/2)`);
+        // Keep loading = true – the loader stays visible during retries
+        setTimeout(() => {
+          fetchDocuments();
+        }, 3000);
+      } else {
+        // All retries exhausted – show empty state (or error)
+        console.error('[useDocuments] All retries exhausted.');
+        setLoading(false);
+      }
     }
-  }, [sessionId]);
+  }, [sessionId, retryCount]);
 
   useEffect(() => {
     fetchDocuments();
