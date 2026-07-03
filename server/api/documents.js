@@ -120,7 +120,7 @@ export async function handleUpload(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
+  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 30;
   const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
   const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 1;
 
