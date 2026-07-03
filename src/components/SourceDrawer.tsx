@@ -11,7 +11,7 @@ interface SourceDrawerProps {
   citations?: Citation[];
 }
 
-export default function SourceDrawer({ isOpen, onClose, sources, citations = [] }: SourceDrawerProps) {
+export default function SourceDrawer({ onClose, sources, citations = [] }: SourceDrawerProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const handleCopy = async (text: string, id: string) => {

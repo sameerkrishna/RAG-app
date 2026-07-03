@@ -30,7 +30,7 @@ export function useDocuments(sessionId: string) {
 
   const uploadDocument = useCallback(async (file: File) => {
     console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
-    setUploadState({ status: 'uploading' });
+    setUploadState({ status: 'uploading', uploadProgress: 0 });
 
     const formData = new FormData();
     formData.append('file', file);
@@ -46,7 +46,7 @@ export function useDocuments(sessionId: string) {
       if (!response.ok || !response.body) {
         const text = await response.text();
         console.error('[useDocuments] Upload request failed:', response.status, text);
-        setUploadState({ status: 'error', error: 'Upload failed', code: 'HTTP_ERROR' });
+        setUploadState({ status: 'error', error: 'Upload failed' });
         return null;
       }
 
@@ -86,7 +86,8 @@ export function useDocuments(sessionId: string) {
                   status: 'upload_complete',
                   documentId: payload.documentId,
                   totalChunks: payload.totalChunks,
-                  totalSets: payload.totalSets
+                  totalSets: payload.totalSets,
+                  uploadProgress: 100
                 });
 
                 const newDoc: Document = {
@@ -114,18 +115,20 @@ export function useDocuments(sessionId: string) {
                 });
 
               } else if (currentEvent === 'embedding_progress') {
+                const indexingProgress = Math.round((payload.processedChunks / payload.totalChunks) * 100);
                 setUploadState({
                   status: 'indexing',
                   processedChunks: payload.processedChunks,
                   totalChunks: payload.totalChunks,
                   setIndex: payload.setIndex,
-                  totalSets: payload.totalSets
+                  totalSets: payload.totalSets,
+                  indexingProgress
                 });
 
               } else if (currentEvent === 'done') {
                 result = payload;
                 console.log(`[useDocuments] ✅ Upload complete for ${payload.document.filename} — ${payload.document.chunkCount} chunks indexed`);
-                setUploadState({ status: 'complete' });
+                setUploadState({ status: 'done', documentId: payload.document.documentId });
                 await fetchDocuments();
                 setTimeout(() => setUploadState({ status: 'idle' }), 3000);
 
@@ -133,8 +136,7 @@ export function useDocuments(sessionId: string) {
                 console.error(`[useDocuments] Server error event:`, payload);
                 setUploadState({
                   status: 'error',
-                  error: payload.message || 'Upload failed',
-                  code: payload.code || 'UNKNOWN'
+                  error: payload.message || 'Upload failed'
                 });
               }
 
@@ -152,8 +154,7 @@ export function useDocuments(sessionId: string) {
       console.error('[useDocuments] Upload fetch error:', error);
       setUploadState({
         status: 'error',
-        error: error.message || 'Upload failed',
-        code: 'NETWORK_ERROR'
+        error: error.message || 'Upload failed'
       });
       return null;
     }

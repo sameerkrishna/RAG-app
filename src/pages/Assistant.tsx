@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useChat, getAllConversations, deleteConversation, markNavigationToKB, resetNavigationFlag } from '../hooks/useChat';
 import type { StoredConversation } from '../hooks/useChat';
 import ChatMessage from '../components/ChatMessage';

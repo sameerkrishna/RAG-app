@@ -121,7 +121,7 @@ export default function KnowledgeBase({ sessionId }: KnowledgeBaseProps) {
 
   const isUploading = uploadState.status === 'uploading';
   const isIndexing = uploadState.status === 'indexing' || uploadState.status === 'upload_complete';
-  const isComplete = uploadState.status === 'complete';
+  const isComplete = uploadState.status === 'done';
   const isActive = isUploading || isIndexing || isComplete;
 
   const phase1Done = uploadState.status === 'upload_complete' || uploadState.status === 'indexing' || isComplete;
