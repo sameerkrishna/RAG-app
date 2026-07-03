@@ -1,484 +1,391 @@
-import { Router } from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
-import pdf from 'pdf-parse';
-import { fileURLToPath } from 'url';;
-import { sanitizeFilename, validatePDFFile, validateFileSize } from '../utils/sanitize.js';
-import {
-  CorruptedPDFError,
-  InvalidFileTypeError,
-  FileTooLargeError,
-  TooManyPDFsError,
-  DuplicateFileError
-} from '../utils/errors.js';
-import { getSessionCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
-import { chunkText, cleanText } from '../utils/chunker.js';
-import { embedSingleBatchGroup } from '../services/embeddingService.js';
-import {
-  getOrCreateSession,
-  canAcceptUpload,
-  addDocumentToSession,
-  removeDocumentFromSession,
-  getAllDocuments,
-  initSessionWithGlobalDocs,
-  isSessionSeeded
-} from '../services/sessionService.js';
-import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
-import { clearMemory } from '../services/memoryService.js';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import type { Document, UploadState } from '../types';
 
-const router = Router();
+export function useDocuments(sessionId: string) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const sseConnectedRef = useRef(false);
+  const isFetchingRef = useRef(false);
+  const dataLoadedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const initDoneRef = useRef(false);
+  const timeoutIdRef = useRef<number | null>(null);
 
-const uploadDir = '/tmp/uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const seedDir = path.resolve(__dirname, '../../seed_documents');
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, sanitizeFilename(file.originalname))
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: parseInt(process.env.MAX_UPLOAD_SIZE_MB || '5') * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf' && path.extname(file.originalname).toLowerCase() === '.pdf') {
-      cb(null, true);
-    } else {
-      cb(new InvalidFileTypeError());
-    }
-  }
-});
-
-function contentDisposition(displayName) {
-  const encoded = encodeURIComponent(displayName)
-    .replace(/'/g, '%27')
-    .replace(/\(/g, '%28')
-    .replace(/\)/g, '%29');
-  return `inline; filename="document.pdf"; filename*=UTF-8''${encoded}`;
-}
-
-async function parsePDFWithBoundaryMap(filePath) {
-  try {
-    const buffer = fs.readFileSync(filePath);
-
-    const pages = [];
-    await pdf(buffer, {
-      pagerender: (pageData) => {
-        return pageData.getTextContent().then(tc => {
-          const pageText = tc.items.map(i => i.str).join(' ');
-          pages.push(pageText);
-          return pageText;
-        });
+  // ─── Cleanup on unmount ──────────────────────────────────────────────────────
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
-    });
-
-    if (pages.length === 0 || pages.every(p => !p.trim())) {
-      const full = await pdf(buffer);
-      pages.push(full.text);
-    }
-
-    const totalPages = pages.length;
-    const cleanedPages = pages.map(p => cleanText(p));
-    const pageMap = [];
-    let charPos = 0;
-
-    for (let i = 0; i < cleanedPages.length; i++) {
-      pageMap.push({ page: i + 1, start: charPos, end: charPos + cleanedPages[i].length });
-      charPos += cleanedPages[i].length + 1;
-    }
-
-    const fullText = cleanedPages.join('\n');
-    return { fullText, pageMap, totalPages };
-  } catch (error) {
-    console.error('PDF parsing error:', error);
-    throw new CorruptedPDFError();
-  }
-}
-
-function getPageNumber(charStart, pageMap) {
-  for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
-  }
-  return pageMap[pageMap.length - 1]?.page || 1;
-}
-
-function sseEvent(res, event, data) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-export async function handleUpload(req, res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
-  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
-  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 1;
-
-  try {
-    const file = req.file;
-    if (!file) throw new InvalidFileTypeError();
-
-    const sessionId = req.headers['x-session-id'] || req.body.sessionId || uuidv4();
-    const session = getOrCreateSession(sessionId);
-    const maxPDFs = parseInt(process.env.MAX_PDFS_PER_SESSION || '3');
-    const cleanFilename = sanitizeFilename(file.originalname);
-
-    const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
-    if (uploadedCount >= maxPDFs) {
-      fs.unlinkSync(file.path);
-      sseEvent(res, 'error', { message: `Maximum ${maxPDFs} uploads reached`, code: 'TOO_MANY_PDFS' });
-      return res.end();
-    }
-
-    if (session.documents.some(d => d.filename === cleanFilename)) {
-      fs.unlinkSync(file.path);
-      sseEvent(res, 'error', { message: `"${cleanFilename}" already uploaded`, code: 'DUPLICATE_FILE' });
-      return res.end();
-    }
-
-    console.log(`[upload] [${sessionId}] Phase 1 — parsing ${cleanFilename} (${file.size} bytes)`);
-    const { fullText, pageMap, totalPages } = await parsePDFWithBoundaryMap(file.path);
-
-    if (!fullText || fullText.trim().length < 50) {
-      fs.unlinkSync(file.path);
-      sseEvent(res, 'error', { message: 'No extractable text — PDF may be scanned or image-only', code: 'EMPTY_PDF' });
-      return res.end();
-    }
-
-    const documentId = uuidv4();
-    // Use chunker defaults (TARGET=600, MAX=750, OVERLAP=100) — do NOT pass overrides
-    const rawChunks = chunkText(fullText);
-
-    if (rawChunks.length === 0) {
-      fs.unlinkSync(file.path);
-      sseEvent(res, 'error', { message: 'No content could be extracted from PDF', code: 'EMPTY_PDF' });
-      return res.end();
-    }
-
-    const chunks = rawChunks.map((chunk, idx) => ({
-      text: chunk.text,
-      metadata: {
-        document_id: documentId,
-        filename: cleanFilename,
-        chunk_id: createHash('md5').update(`${cleanFilename}::${chunk.text}`).digest('hex').slice(0, 16),
-        chunk_index: idx,
-        total_chunks: rawChunks.length,
-        page_number: getPageNumber(chunk.charStart, pageMap),
-        total_pages: totalPages,
-        source_type: 'session_upload',
-        upload_timestamp: new Date().toISOString(),
-        char_start: chunk.charStart,
-        char_end: chunk.charEnd,
-        token_count: chunk.tokenCount
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
       }
-    }));
+    };
+  }, []);
 
-    const totalChunks = chunks.length;
-    const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-    const totalSets = Math.ceil(totalBatches / PARALLEL_CALLS);
+  // ─── Update documents safely ──────────────────────────────────────────────
+  const updateDocuments = useCallback((sessionDocs: Document[], globalDocs: Document[]) => {
+    if (!mountedRef.current) return;
+    setDocuments(sessionDocs);
+    setGlobalDocuments(globalDocs);
+    setLoading(false);
+    dataLoadedRef.current = true;
+  }, []);
 
-    console.log(`[upload] [${sessionId}] ${totalChunks} chunks → ${totalBatches} API calls → ${totalSets} sets of ${PARALLEL_CALLS} parallel`);
+  // ─── Close SSE connection ─────────────────────────────────────────────────
+  const closeSSE = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    sseConnectedRef.current = false;
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+  }, []);
 
-    sseEvent(res, 'upload_complete', {
-      documentId, filename: cleanFilename, fileSize: file.size,
-      pageCount: totalPages, totalChunks, totalBatches, totalSets
-    });
+  // ─── Main fetch function ────────────────────────────────────────────────────
+  const fetchDocuments = useCallback(async (isInitial = false) => {
+    // Prevent multiple simultaneous fetches
+    if (isFetchingRef.current) return;
+    
+    // If data is already loaded and this is not a forced refresh, skip
+    if (dataLoadedRef.current && !isInitial) {
+      console.log('[useDocuments] Data already loaded, skipping fetch.');
+      return;
+    }
 
-    addDocumentToSession(sessionId, {
-      id: documentId, filename: cleanFilename, fileSize: file.size,
-      pageCount: totalPages, chunkCount: 0, status: 'indexing'
-    });
+    if (!sessionId || !mountedRef.current) {
+      if (mountedRef.current) setLoading(false);
+      return;
+    }
 
-    console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
+    isFetchingRef.current = true;
 
-    const { collection } = await getSessionCollection(sessionId);
-    let processedChunks = 0;
-    const allEmbeddings = [];
+    // Only show loader on initial load or when explicitly refreshing
+    if (isInitial || !dataLoadedRef.current) {
+      setLoading(true);
+    }
 
-    const batches = [];
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) batches.push(chunks.slice(i, i + BATCH_SIZE));
+    // Close any existing SSE connection
+    closeSSE();
 
-    const sets = [];
-    for (let i = 0; i < batches.length; i += PARALLEL_CALLS) sets.push(batches.slice(i, i + PARALLEL_CALLS));
+    try {
+      // Try direct fetch first
+      const response = await fetch('/api/documents', {
+        headers: { 'x-session-id': sessionId }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
 
-    console.log(`[upload] [${sessionId}] Phase 2 start — ${sets.length} sets`);
+      const sessionDocs = data.sessionDocuments || [];
+      const globalDocs = data.globalDocuments || [];
+      const hasData = sessionDocs.length > 0 || globalDocs.length > 0;
 
-    for (let setIdx = 0; setIdx < sets.length; setIdx++) {
-      const isLastSet = setIdx === sets.length - 1;
-      const currentSet = sets[setIdx];
-      const setChunkCount = currentSet.reduce((acc, b) => acc + b.length, 0);
+      if (hasData && mountedRef.current) {
+        // ✅ Data ready – update and stop
+        updateDocuments(sessionDocs, globalDocs);
+        isFetchingRef.current = false;
+        console.log('[useDocuments] Data ready, loaded directly.');
+        return;
+      }
 
-      console.log(`[upload] [${sessionId}] Set ${setIdx + 1}/${sets.length} — embedding ${currentSet.length} batch call(s) (${setChunkCount} chunks) in parallel`);
+      // ❌ No data – connect to SSE to wait for seeding
+      if (mountedRef.current) {
+        console.log('[useDocuments] No data, connecting to SSE...');
+        const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
+        eventSourceRef.current = new EventSource(url);
+        sseConnectedRef.current = true;
 
-      const embedResults = await Promise.allSettled(
-        currentSet.map(batch => embedSingleBatchGroup(batch.map(c => c.text)))
-      );
+        // ─── Listen for seeding_complete event ──────────────────────────────
+        const onSeedingComplete = (event: any) => {
+          if (!mountedRef.current) return;
+          try {
+            const data = JSON.parse(event.data);
+            console.log('[useDocuments] ✅ Seeding complete!', data);
+            closeSSE();
+            // Re-fetch documents (but don't show loader again)
+            isFetchingRef.current = false;
+            fetchDocuments(false);
+          } catch (error) {
+            console.error('[useDocuments] Failed to parse SSE event:', error);
+          }
+        };
 
-      const setEmbeddings = [];
-      embedResults.forEach((result, batchIdx) => {
-        const batch = currentSet[batchIdx];
-        if (result.status === 'fulfilled') {
-          result.value.forEach((vector, chunkIdx) => {
-            setEmbeddings.push({
-              id: batch[chunkIdx].metadata.chunk_id,
-              embedding: vector,
-              metadata: batch[chunkIdx].metadata,
-              text: batch[chunkIdx].text
-            });
+        // ─── Listen for error events ─────────────────────────────────────────
+        const onError = (event: any) => {
+          if (!mountedRef.current) return;
+          console.error('[useDocuments] SSE error:', event);
+          closeSSE();
+          // Fallback: try direct fetch after 2 seconds
+          setTimeout(() => {
+            if (mountedRef.current && !dataLoadedRef.current) {
+              console.log('[useDocuments] SSE failed, trying direct fetch...');
+              isFetchingRef.current = false;
+              fetchDocuments(false);
+            }
+          }, 2000);
+        };
+
+        // ─── Listen for open event ───────────────────────────────────────────
+        const onOpen = () => {
+          if (mountedRef.current) {
+            console.log('[useDocuments] SSE connection opened');
+          }
+        };
+
+        eventSourceRef.current.addEventListener('seeding_complete', onSeedingComplete);
+        eventSourceRef.current.addEventListener('error', onError);
+        eventSourceRef.current.onopen = onOpen;
+
+        // Safety timeout: if SSE doesn't respond in 20 seconds, try direct fetch
+        timeoutIdRef.current = setTimeout(() => {
+          if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
+            console.log('[useDocuments] SSE timeout, trying direct fetch...');
+            closeSSE();
+            isFetchingRef.current = false;
+            fetchDocuments(false);
+          }
+        }, 20000) as unknown as number;
+      }
+
+      isFetchingRef.current = false;
+
+    } catch (error) {
+      console.error('[useDocuments] Fetch error:', error);
+      
+      if (mountedRef.current && !dataLoadedRef.current) {
+        // Try SSE as fallback if not already connected
+        if (!sseConnectedRef.current) {
+          console.log('[useDocuments] Direct fetch failed, trying SSE...');
+          const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
+          eventSourceRef.current = new EventSource(url);
+          sseConnectedRef.current = true;
+
+          eventSourceRef.current.addEventListener('seeding_complete', (event: any) => {
+            if (!mountedRef.current) return;
+            try {
+              const data = JSON.parse(event.data);
+              console.log('[useDocuments] ✅ Seeding complete!', data);
+              closeSSE();
+              isFetchingRef.current = false;
+              fetchDocuments(false);
+            } catch (error) {
+              console.error('[useDocuments] Failed to parse SSE event:', error);
+            }
           });
-          console.log(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} embedded OK (${batch.length} chunks)`);
+
+          eventSourceRef.current.addEventListener('error', () => {
+            if (!mountedRef.current) return;
+            console.error('[useDocuments] SSE error fallback');
+            closeSSE();
+            if (!dataLoadedRef.current) {
+              setLoading(false);
+            }
+            isFetchingRef.current = false;
+          });
+
+          eventSourceRef.current.onopen = () => {
+            if (mountedRef.current) {
+              console.log('[useDocuments] SSE connection opened (fallback)');
+            }
+          };
+
+          timeoutIdRef.current = setTimeout(() => {
+            if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
+              console.log('[useDocuments] SSE timeout, giving up.');
+              closeSSE();
+              setLoading(false);
+              isFetchingRef.current = false;
+            }
+          }, 20000) as unknown as number;
         } else {
-          console.error(`[upload] [${sessionId}]   Batch ${setIdx * PARALLEL_CALLS + batchIdx + 1} FAILED:`, result.reason?.message);
+          // If SSE already connected but we got an error, just show empty
+          if (!dataLoadedRef.current) {
+            setLoading(false);
+          }
+          isFetchingRef.current = false;
         }
+      } else {
+        isFetchingRef.current = false;
+      }
+    }
+  }, [sessionId, closeSSE, updateDocuments]);
+
+  // ─── Initial fetch ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    // Only run once per sessionId
+    if (initDoneRef.current && sessionId) return;
+    initDoneRef.current = true;
+    dataLoadedRef.current = false;
+    fetchDocuments(true);
+  }, [sessionId, fetchDocuments]);
+
+  // ─── Upload document ────────────────────────────────────────────────────────
+  const uploadDocument = useCallback(async (file: File) => {
+    console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
+    setUploadState({ status: 'uploading', uploadProgress: 0 });
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sessionId', sessionId);
+
+    try {
+      const response = await fetch('/api/documents/upload', {
+        method: 'POST',
+        headers: { 'x-session-id': sessionId },
+        body: formData
       });
 
-      processedChunks += setEmbeddings.length;
-      allEmbeddings.push(...setEmbeddings);
-
-      console.log(`[upload] [${sessionId}] Set ${setIdx + 1} embedded — ${processedChunks}/${totalChunks} chunks so far`);
-
-      if (!isLastSet) {
-        console.log(`[upload] [${sessionId}] Starting ${GROUP_WAIT_MS / 1000}s timer + Chroma write concurrently for set ${setIdx + 1}`);
-        const timer = new Promise(r => setTimeout(r, GROUP_WAIT_MS));
-        const chromaWrite = addVectors(
-          collection,
-          setEmbeddings.map(e => ({ text: e.text, metadata: e.metadata })),
-          setEmbeddings.map(e => e.embedding),
-          setEmbeddings.map(e => e.id)
-        ).then(() => console.log(`[upload] [${sessionId}] Chroma write done for set ${setIdx + 1} (${setEmbeddings.length} vectors)`))
-          .catch(err => console.error(`[upload] [${sessionId}] Chroma write FAILED for set ${setIdx + 1}:`, err.message));
-
-        sseEvent(res, 'embedding_progress', {
-          processedChunks, totalChunks,
-          setIndex: setIdx + 1, totalSets,
-          waitingMs: GROUP_WAIT_MS, chromaWriteComplete: false
-        });
-
-        await Promise.all([timer, chromaWrite]);
-        console.log(`[upload] [${sessionId}] Timer + Chroma both done for set ${setIdx + 1}, proceeding to set ${setIdx + 2}`);
-
-      } else {
-        console.log(`[upload] [${sessionId}] Last set ${setIdx + 1} — awaiting Chroma write directly`);
-        await addVectors(
-          collection,
-          setEmbeddings.map(e => ({ text: e.text, metadata: e.metadata })),
-          setEmbeddings.map(e => e.embedding),
-          setEmbeddings.map(e => e.id)
-        );
-        console.log(`[upload] [${sessionId}] Chroma write complete for last set (${setEmbeddings.length} vectors)`);
-
-        sseEvent(res, 'embedding_progress', {
-          processedChunks, totalChunks,
-          setIndex: setIdx + 1, totalSets,
-          waitingMs: 0, chromaWriteComplete: true
-        });
-      }
-    }
-
-    invalidateSessionCollectionCache(sessionId);
-    addDocumentToSession(sessionId, {
-      id: documentId, filename: cleanFilename, fileSize: file.size,
-      pageCount: totalPages, chunkCount: allEmbeddings.length, status: 'ready'
-    });
-
-    console.log(`[upload] [${sessionId}] ✅ Done — ${allEmbeddings.length} vectors in Chroma for ${cleanFilename}`);
-
-    sseEvent(res, 'done', {
-      document: {
-        id: documentId, filename: cleanFilename, fileSize: file.size,
-        pageCount: totalPages, chunkCount: allEmbeddings.length,
-        uploadTimestamp: new Date().toISOString()
-      },
-      sessionId
-    });
-
-    res.end();
-
-  } catch (error) {
-    if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch { }
-    }
-    console.error('[upload] Unhandled error:', error);
-    sseEvent(res, 'error', { message: error.message || 'Upload failed', code: error.code || 'UPLOAD_ERROR' });
-    res.end();
-  }
-}
-
-// ─── SSE: Seeding status stream ─────────────────────────────────────────────
-export async function seedingStatusHandler(req, res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-
-  if (!sessionId) {
-    sseEvent(res, 'error', { message: 'Missing session ID', code: 'MISSING_SESSION' });
-    res.end();
-    return;
-  }
-
-  console.log(`[seeding-status] Client connected for session ${sessionId}`);
-
-  // Check if session is already seeded
-  const seeded = isSessionSeeded(sessionId);
-  if (seeded) {
-    console.log(`[seeding-status] Session ${sessionId} already seeded – returning immediately`);
-    sseEvent(res, 'seeding_complete', { sessionId, seeded: true });
-    res.end();
-    return;
-  }
-
-  // Create a listener for this session
-  const eventKey = `seeding:${sessionId}`;
-
-  // Store the listener so we can emit when seeding completes
-  if (!global.seedingListeners) {
-    global.seedingListeners = new Map();
-  }
-  if (!global.seedingListeners.has(eventKey)) {
-    global.seedingListeners.set(eventKey, []);
-  }
-  global.seedingListeners.get(eventKey).push(res);
-
-  // Clean up listener on client disconnect
-  req.on('close', () => {
-    const listeners = global.seedingListeners.get(eventKey) || [];
-    const idx = listeners.indexOf(res);
-    if (idx >= 0) {
-      listeners.splice(idx, 1);
-      console.log(`[seeding-status] Client disconnected for ${sessionId}`);
-    }
-    if (listeners.length === 0) {
-      global.seedingListeners.delete(eventKey);
-    }
-  });
-
-  // Start seeding in the background (if not already running)
-  try {
-    console.log(`[seeding-status] Triggering seeding for ${sessionId}...`);
-    await initSessionWithGlobalDocs(sessionId);
-    // The seeding function will notify listeners when complete
-  } catch (err) {
-    console.error(`[seeding-status] Seeding failed for ${sessionId}:`, err.message);
-    const listeners = global.seedingListeners.get(eventKey) || [];
-    listeners.forEach((response) => {
-      sseEvent(response, 'error', { message: err.message, code: 'SEED_FAILED' });
-      response.end();
-    });
-    global.seedingListeners.delete(eventKey);
-  }
-}
-
-// ─── List documents handler ──────────────────────────────────────────────────
-export async function listDocumentsHandler(req, res) {
-  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-  try {
-    getOrCreateSession(sessionId);
-    const documents = getAllDocuments(sessionId);
-    res.json(documents);
-  } catch (error) {
-    console.error('List documents error:', error);
-    res.status(500).json({ error: 'Failed to list documents', code: 'LIST_ERROR' });
-  }
-}
-
-// ─── Delete document ─────────────────────────────────────────────────────────
-export async function deleteDocument(req, res) {
-  const { documentId } = req.params;
-  const filename = req.query.filename;
-  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-
-  try {
-    if (sessionId) {
-      try {
-        const { collection } = await getSessionCollection(sessionId);
-        if (collection) {
-          await deleteDocumentVectors(collection, documentId);
-        }
-      } catch (chromaErr) {
-        console.warn(`[delete] Chroma delete failed for ${documentId}:`, chromaErr.message);
+      if (!response.ok || !response.body) {
+        const text = await response.text();
+        console.error('[useDocuments] Upload request failed:', response.status, text);
+        setUploadState({ status: 'error', error: 'Upload failed' });
+        return null;
       }
 
-      removeDocumentFromSession(sessionId, documentId);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let result: any = null;
 
-      clearMemory(sessionId);
-      console.log(`[delete] Cleared memory for session ${sessionId}`);
-    }
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-    if (filename) {
-      const filePath = path.join(uploadDir, filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`[delete] Removed file: ${filePath}`);
-      } else {
-        console.warn(`[delete] File not found on disk: ${filePath}`);
-      }
-    }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
-    res.json({ success: true, documentId });
-  } catch (error) {
-    console.error('Delete document error:', error);
-    res.status(500).json({ error: 'Failed to delete document', code: 'DELETE_ERROR' });
-  }
-}
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+            continue;
+          }
+          if (line.startsWith('data: ')) {
+            const rawData = line.slice(6);
+            try {
+              const payload = JSON.parse(rawData);
 
-// ─── Get document file ──────────────────────────────────────────────────────
-export async function getDocumentFile(req, res) {
-  const filename = req.query.filename;
-
-  try {
-    if (filename) {
-      const uploadPath = path.join(uploadDir, filename);
-      if (fs.existsSync(uploadPath)) {
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', contentDisposition(filename));
-        return fs.createReadStream(uploadPath).pipe(res);
-      }
-
-      const seedPath = path.join(seedDir, filename);
-      if (fs.existsSync(seedPath)) {
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', contentDisposition(filename));
-        return fs.createReadStream(seedPath).pipe(res);
-      }
-
-      if (fs.existsSync(seedDir)) {
-        const allPdfs = fs.readdirSync(seedDir).filter(f => f.endsWith('.pdf'));
-        const match = allPdfs.find(f => f.includes(path.parse(filename).name));
-        if (match) {
-          const matchPath = path.join(seedDir, match);
-          res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', contentDisposition(match));
-          return fs.createReadStream(matchPath).pipe(res);
+              if (currentEvent === 'upload_complete') {
+                setUploadState({
+                  status: 'upload_complete',
+                  documentId: payload.documentId,
+                  totalChunks: payload.totalChunks,
+                  totalSets: payload.totalSets,
+                  uploadProgress: 100
+                });
+                const newDoc: Document = {
+                  document_id: payload.documentId,
+                  filename: payload.filename,
+                  chunk_count: 0,
+                  page_count: payload.pageCount,
+                  upload_timestamp: new Date().toISOString(),
+                  source_type: 'session_upload',
+                  fileSize: payload.fileSize,
+                  status: 'indexing'
+                };
+                setDocuments(prev => {
+                  if (prev.some(d => d.document_id === payload.documentId)) {
+                    return prev.map(d =>
+                      d.document_id === payload.documentId
+                        ? { ...d, status: 'indexing' as const }
+                        : d
+                    );
+                  }
+                  return [newDoc, ...prev];
+                });
+              } else if (currentEvent === 'embedding_progress') {
+                const indexingProgress = Math.round((payload.processedChunks / payload.totalChunks) * 100);
+                setUploadState({
+                  status: 'indexing',
+                  processedChunks: payload.processedChunks,
+                  totalChunks: payload.totalChunks,
+                  setIndex: payload.setIndex,
+                  totalSets: payload.totalSets,
+                  indexingProgress
+                });
+              } else if (currentEvent === 'done') {
+                result = payload;
+                setUploadState({ status: 'done', documentId: payload.document.documentId });
+                setDocuments(prev =>
+                  prev.map(d =>
+                    d.document_id === payload.document.documentId
+                      ? { ...d, chunk_count: payload.document.chunkCount, status: 'ready' as const }
+                      : d
+                  )
+                );
+                // Refresh the list after upload (force re-fetch)
+                dataLoadedRef.current = false;
+                isFetchingRef.current = false;
+                fetchDocuments(true);
+                setTimeout(() => setUploadState({ status: 'idle' }), 3000);
+              } else if (currentEvent === 'error') {
+                console.error('[useDocuments] Server error:', payload);
+                setUploadState({ status: 'error', error: payload.message || 'Upload failed' });
+              }
+              currentEvent = '';
+            } catch (e) {
+              console.warn('[useDocuments] Failed to parse SSE data:', rawData);
+            }
+          }
         }
       }
+      return result;
+    } catch (error: any) {
+      console.error('[useDocuments] Upload fetch error:', error);
+      setUploadState({ status: 'error', error: error.message || 'Upload failed' });
+      return null;
     }
+  }, [sessionId, fetchDocuments]);
 
-    return res.status(404).json({ error: 'Document file not found', code: 'FILE_NOT_FOUND' });
-  } catch (error) {
-    console.error('Get document file error:', error);
-    res.status(500).json({ error: 'Failed to retrieve document', code: 'RETRIEVE_ERROR' });
-  }
+  // ─── Delete document ────────────────────────────────────────────────────────
+  const deleteDocument = useCallback(async (documentId: string, filename: string) => {
+    try {
+      const response = await fetch(`/api/documents/${documentId}?filename=${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+        headers: { 'x-session-id': sessionId }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setDocuments(prev => prev.filter(d => d.document_id !== documentId));
+      return true;
+    } catch (error) {
+      console.error('[useDocuments] Failed to delete document:', error);
+      return false;
+    }
+  }, [sessionId]);
+
+  // ─── Reset upload state ────────────────────────────────────────────────────
+  const resetUploadState = useCallback(() => {
+    setUploadState({ status: 'idle' });
+  }, []);
+
+  // ─── Manual refresh ────────────────────────────────────────────────────────
+  const refreshDocuments = useCallback(() => {
+    closeSSE();
+    dataLoadedRef.current = false;
+    isFetchingRef.current = false;
+    fetchDocuments(true);
+  }, [closeSSE, fetchDocuments]);
+
+  return {
+    documents,
+    globalDocuments,
+    loading,
+    uploadState,
+    uploadDocument,
+    deleteDocument,
+    resetUploadState,
+    refreshDocuments
+  };
 }
-
-// ─── Routes ──────────────────────────────────────────────────────────────────
-router.post('/upload', upload.single('file'), handleUpload);
-router.get('/', listDocumentsHandler);
-router.get('/seeding-status', seedingStatusHandler);
-router.delete('/:documentId', deleteDocument);
-router.get('/:documentId/file', getDocumentFile);
-
-export default router;
