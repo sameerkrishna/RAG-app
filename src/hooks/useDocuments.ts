@@ -17,7 +17,7 @@ export function useDocuments(sessionId: string) {
     setLoading(true);
     let retries = 0;
     const MAX_RETRIES = 8;          // More retries
-    const BASE_DELAY = 200;        // 2 seconds
+    const BASE_DELAY = 1000;        // 2 seconds
 
     const attemptFetch = async (): Promise<void> => {
       try {
