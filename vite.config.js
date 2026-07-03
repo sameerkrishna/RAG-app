@@ -45,14 +45,30 @@ function expressPlugin() {
         name: 'express-plugin',
         configureServer: function (server) {
             return __awaiter(this, void 0, void 0, function () {
-                var expressApp;
+                var dotenv, expressApp;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, import('./server/app.js')];
+                        case 0: return [4 /*yield*/, import('dotenv')];
                         case 1:
+                            dotenv = _a.sent();
+                            dotenv.config();
+                            return [4 /*yield*/, import('./server/app.js')];
+                        case 2:
                             expressApp = (_a.sent()).default;
                             app = expressApp;
                             server.middlewares.use('/api', function (req, res, next) {
+                                var _a;
+                                // ✅ Patch SSE routes to flush immediately — prevents Vite buffering tokens
+                                if ((_a = req.url) === null || _a === void 0 ? void 0 : _a.startsWith('/chat')) {
+                                    res.setHeader('X-Accel-Buffering', 'no');
+                                    var originalWrite_1 = res.write.bind(res);
+                                    res.write = function (chunk) {
+                                        var result = originalWrite_1(chunk);
+                                        if (typeof res.flush === 'function')
+                                            res.flush();
+                                        return result;
+                                    };
+                                }
                                 app(req, res, next);
                             });
                             return [2 /*return*/];
