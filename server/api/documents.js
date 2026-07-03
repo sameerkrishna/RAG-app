@@ -22,7 +22,9 @@ import {
   canAcceptUpload,
   addDocumentToSession,
   removeDocumentFromSession,
-  getAllDocuments
+  getAllDocuments,
+  initSessionWithGlobalDocs,
+  isSessionSeeded
 } from '../services/sessionService.js';
 import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
 import { clearMemory } from '../services/memoryService.js';
@@ -104,7 +106,6 @@ async function parsePDFWithBoundaryMap(filePath) {
 
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
     if (charStart >= entry.start && charStart <= entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
@@ -314,6 +315,74 @@ export async function handleUpload(req, res) {
   }
 }
 
+// ─── SSE: Seeding status stream ─────────────────────────────────────────────
+export async function seedingStatusHandler(req, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+
+  if (!sessionId) {
+    sseEvent(res, 'error', { message: 'Missing session ID', code: 'MISSING_SESSION' });
+    res.end();
+    return;
+  }
+
+  console.log(`[seeding-status] Client connected for session ${sessionId}`);
+
+  // Check if session is already seeded
+  const seeded = isSessionSeeded(sessionId);
+  if (seeded) {
+    console.log(`[seeding-status] Session ${sessionId} already seeded – returning immediately`);
+    sseEvent(res, 'seeding_complete', { sessionId, seeded: true });
+    res.end();
+    return;
+  }
+
+  // Create a listener for this session
+  const eventKey = `seeding:${sessionId}`;
+
+  // Store the listener so we can emit when seeding completes
+  if (!global.seedingListeners) {
+    global.seedingListeners = new Map();
+  }
+  if (!global.seedingListeners.has(eventKey)) {
+    global.seedingListeners.set(eventKey, []);
+  }
+  global.seedingListeners.get(eventKey).push(res);
+
+  // Clean up listener on client disconnect
+  req.on('close', () => {
+    const listeners = global.seedingListeners.get(eventKey) || [];
+    const idx = listeners.indexOf(res);
+    if (idx >= 0) {
+      listeners.splice(idx, 1);
+      console.log(`[seeding-status] Client disconnected for ${sessionId}`);
+    }
+    if (listeners.length === 0) {
+      global.seedingListeners.delete(eventKey);
+    }
+  });
+
+  // Start seeding in the background (if not already running)
+  try {
+    console.log(`[seeding-status] Triggering seeding for ${sessionId}...`);
+    await initSessionWithGlobalDocs(sessionId);
+    // The seeding function will notify listeners when complete
+  } catch (err) {
+    console.error(`[seeding-status] Seeding failed for ${sessionId}:`, err.message);
+    const listeners = global.seedingListeners.get(eventKey) || [];
+    listeners.forEach((response) => {
+      sseEvent(response, 'error', { message: err.message, code: 'SEED_FAILED' });
+      response.end();
+    });
+    global.seedingListeners.delete(eventKey);
+  }
+}
+
+// ─── List documents handler ──────────────────────────────────────────────────
 export async function listDocumentsHandler(req, res) {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
   try {
@@ -326,6 +395,7 @@ export async function listDocumentsHandler(req, res) {
   }
 }
 
+// ─── Delete document ─────────────────────────────────────────────────────────
 export async function deleteDocument(req, res) {
   const { documentId } = req.params;
   const filename = req.query.filename;
@@ -365,6 +435,7 @@ export async function deleteDocument(req, res) {
   }
 }
 
+// ─── Get document file ──────────────────────────────────────────────────────
 export async function getDocumentFile(req, res) {
   const filename = req.query.filename;
 
@@ -403,8 +474,10 @@ export async function getDocumentFile(req, res) {
   }
 }
 
+// ─── Routes ──────────────────────────────────────────────────────────────────
 router.post('/upload', upload.single('file'), handleUpload);
 router.get('/', listDocumentsHandler);
+router.get('/seeding-status', seedingStatusHandler);
 router.delete('/:documentId', deleteDocument);
 router.get('/:documentId/file', getDocumentFile);
 
