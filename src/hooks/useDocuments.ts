@@ -7,69 +7,7 @@ export function useDocuments(sessionId: string) {
   const [loading, setLoading] = useState(true);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
 
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const sseConnectedRef = useRef(false);
-  const isFetchingRef = useRef(false);
-  const dataLoadedRef = useRef(false);
-  const mountedRef = useRef(true);
-  const initDoneRef = useRef(false);
-  const timeoutIdRef = useRef<number | null>(null);
-
-  // ─── Cleanup on unmount ──────────────────────────────────────────────────────
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      if (timeoutIdRef.current) {
-        clearTimeout(timeoutIdRef.current);
-        timeoutIdRef.current = null;
-      }
-    };
-  }, []);
-
-  // ─── Update documents safely ──────────────────────────────────────────────
-  const updateDocuments = useCallback((sessionDocs: Document[], globalDocs: Document[]) => {
-    if (!mountedRef.current) return;
-    setDocuments(sessionDocs);
-    setGlobalDocuments(globalDocs);
-    setLoading(false);
-    dataLoadedRef.current = true;
-  }, []);
-
-  // ─── Close SSE connection ─────────────────────────────────────────────────
-  const closeSSE = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    sseConnectedRef.current = false;
-    if (timeoutIdRef.current) {
-      clearTimeout(timeoutIdRef.current);
-      timeoutIdRef.current = null;
-    }
-  }, []);
-
-  // ─── Main fetch function ────────────────────────────────────────────────────
-  const fetchDocuments = useCallback(async (isInitial = false) => {
-    // Prevent multiple simultaneous fetches
-    if (isFetchingRef.current) return;
-
-    // If data is already loaded and this is not a forced refresh, skip
-    if (dataLoadedRef.current && !isInitial) {
-      console.log('[useDocuments] Data already loaded, skipping fetch.');
-      return;
-    }
-
-    if (!sessionId || !mountedRef.current) {
-      if (mountedRef.current) setLoading(false);
-      return;
-    }
-
-    setLoading(true);
+  const fetchDocuments = useCallback(async () => {
     try {
       const response = await fetch('/api/documents', {
         headers: { 'x-session-id': sessionId }
@@ -80,74 +18,15 @@ export function useDocuments(sessionId: string) {
       setDocuments(data.sessionDocuments || []);
       setGlobalDocuments(data.globalDocuments || []);
     } catch (error) {
-      console.error('[useDocuments] Fetch error:', error);
-
-      if (mountedRef.current && !dataLoadedRef.current) {
-        // Try SSE as fallback if not already connected
-        if (!sseConnectedRef.current) {
-          console.log('[useDocuments] Direct fetch failed, trying SSE...');
-          const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
-          eventSourceRef.current = new EventSource(url);
-          sseConnectedRef.current = true;
-
-          eventSourceRef.current.addEventListener('seeding_complete', (event: any) => {
-            if (!mountedRef.current) return;
-            try {
-              const data = JSON.parse(event.data);
-              console.log('[useDocuments] ✅ Seeding complete!', data);
-              closeSSE();
-              isFetchingRef.current = false;
-              fetchDocuments(false);
-            } catch (error) {
-              console.error('[useDocuments] Failed to parse SSE event:', error);
-            }
-          });
-
-          eventSourceRef.current.addEventListener('error', () => {
-            if (!mountedRef.current) return;
-            console.error('[useDocuments] SSE error fallback');
-            closeSSE();
-            if (!dataLoadedRef.current) {
-              setLoading(false);
-            }
-            isFetchingRef.current = false;
-          });
-
-          eventSourceRef.current.onopen = () => {
-            if (mountedRef.current) {
-              console.log('[useDocuments] SSE connection opened (fallback)');
-            }
-          };
-
-          timeoutIdRef.current = setTimeout(() => {
-            if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
-              console.log('[useDocuments] SSE timeout, giving up.');
-              closeSSE();
-              setLoading(false);
-              isFetchingRef.current = false;
-            }
-          }, 20000) as unknown as number;
-        } else {
-          // If SSE already connected but we got an error, just show empty
-          if (!dataLoadedRef.current) {
-            setLoading(false);
-          }
-          isFetchingRef.current = false;
-        }
-      } else {
-        isFetchingRef.current = false;
-      }
+      console.error('[useDocuments] Failed to fetch documents:', error);
+    } finally {
+      setLoading(false);
     }
-  }, [sessionId, closeSSE, updateDocuments]);
+  }, [sessionId]);
 
-  // ─── Initial fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
-    // Only run once per sessionId
-    if (initDoneRef.current && sessionId) return;
-    initDoneRef.current = true;
-    dataLoadedRef.current = false;
-    fetchDocuments(true);
-  }, [sessionId, fetchDocuments]);
+    fetchDocuments();
+  }, [fetchDocuments]);
 
   const uploadDocument = useCallback(async (file: File) => {
     console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
@@ -161,7 +40,7 @@ export function useDocuments(sessionId: string) {
       const response = await fetch('/api/documents/upload', {
         method: 'POST',
         headers: { 'x-session-id': sessionId },
-        body: formData,
+        body: formData
       });
 
       if (!response.ok || !response.body) {
