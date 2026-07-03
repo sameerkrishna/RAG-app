@@ -105,6 +105,7 @@ async function parsePDFWithBoundaryMap(filePath) {
 function getPageNumber(charStart, pageMap) {
   for (const entry of pageMap) {
     if (charStart >= entry.start && charStart <= entry.end) return entry.page;
+    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
   }
   return pageMap[pageMap.length - 1]?.page || 1;
 }
@@ -119,9 +120,9 @@ export async function handleUpload(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 10;
-  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 10;
-  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 5;
+  const BATCH_SIZE = parseInt(process.env.EMBEDDING_BATCH_MAX_CHUNKS) || 7;
+  const PARALLEL_CALLS = parseInt(process.env.EMBEDDING_PARALLEL_CALLS) || 4;
+  const GROUP_WAIT_MS = parseInt(process.env.EMBEDDING_GROUP_WAIT_MS) || 61000;
 
   try {
     const file = req.file;
