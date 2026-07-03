@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Document, UploadState } from '../types';
 
 export function useDocuments(sessionId: string) {
@@ -6,13 +6,23 @@ export function useDocuments(sessionId: string) {
   const [globalDocuments, setGlobalDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
-  const [retryCount, setRetryCount] = useState(0);
+
+  const retryCountRef = useRef(0);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const fetchDocuments = useCallback(async () => {
     if (!sessionId) {
-      // If session is missing, don't hide the loader – we're waiting for it.
-      // Only set loading false if we truly have no session and want to show empty state.
-      // For now, keep loading true to avoid flashing empty.
+      if (isMountedRef.current) setLoading(false);
       return;
     }
 
@@ -25,52 +35,63 @@ export function useDocuments(sessionId: string) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      console.log('[useDocuments] fetchDocuments — session:', data.sessionDocuments?.length, 'global:', data.globalDocuments?.length);
 
       const sessionDocs = data.sessionDocuments || [];
       const globalDocs = data.globalDocuments || [];
       const hasDocuments = sessionDocs.length > 0 || globalDocs.length > 0;
 
-      // If we got an empty response AND we haven't retried too many times, retry.
-      if (!hasDocuments && retryCount < 2) {
-        setRetryCount(prev => prev + 1);
-        console.log(`[useDocuments] Empty response (cold start?), retrying in 2s... (attempt ${retryCount + 1}/2)`);
-        // Keep loading = true – loader stays visible during retry.
-        setTimeout(() => {
-          fetchDocuments();
+      // If the response is empty (cold start), retry up to 2 times
+      if (!hasDocuments && retryCountRef.current < 2) {
+        retryCountRef.current += 1;
+        console.log(`[useDocuments] Empty response, retrying in 2s... (attempt ${retryCountRef.current}/2)`);
+        // Clear any pending timeout to avoid overlapping retries
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current) {
+            fetchDocuments();
+          }
         }, 2000);
+        // Keep loading = true – the loader stays visible
         return;
       }
 
-      // Either we have data, or we've exhausted retries.
-      setDocuments(sessionDocs);
-      setGlobalDocuments(globalDocs);
-      setRetryCount(0); // Reset retry counter on success
-      setLoading(false);
-
+      // Success or retries exhausted – update state
+      retryCountRef.current = 0;
+      if (isMountedRef.current) {
+        setDocuments(sessionDocs);
+        setGlobalDocuments(globalDocs);
+        setLoading(false);
+      }
     } catch (error) {
       console.error('[useDocuments] Failed to fetch documents:', error);
-
-      // Retry on network/backend errors too
-      if (retryCount < 2) {
-        setRetryCount(prev => prev + 1);
-        console.log(`[useDocuments] Error, retrying in 3s... (attempt ${retryCount + 1}/2)`);
-        setTimeout(() => {
-          fetchDocuments();
+      if (retryCountRef.current < 2) {
+        retryCountRef.current += 1;
+        console.log(`[useDocuments] Error, retrying in 3s... (attempt ${retryCountRef.current}/2)`);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current) {
+            fetchDocuments();
+          }
         }, 3000);
         // Keep loading = true
-      } else {
-        console.error('[useDocuments] All retries exhausted.');
+        return;
+      }
+      // All retries exhausted – show empty state
+      retryCountRef.current = 0;
+      if (isMountedRef.current) {
         setLoading(false);
       }
     }
-  }, [sessionId, retryCount]);
+  }, [sessionId]);
 
+  // Fetch when sessionId changes, and reset retry count
   useEffect(() => {
+    retryCountRef.current = 0;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     fetchDocuments();
-  }, [fetchDocuments]);
+  }, [sessionId, fetchDocuments]);
 
-  // ─── the rest of your hook (upload, delete, reset) is unchanged ──────────
+  // ─── Upload, delete, reset (unchanged) ──────────────────────────────────
   const uploadDocument = useCallback(async (file: File) => {
     console.log(`[useDocuments] Starting upload for ${file.name} (${file.size} bytes)`);
     setUploadState({ status: 'uploading', uploadProgress: 0 });
