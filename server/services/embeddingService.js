@@ -77,7 +77,7 @@ const RATE_LIMITER = new SlidingWindowRateLimiter(TPM_LIMIT);
 // BATCH_SIZE: number of chunks per embedContent call
 // (kept at 10; note the real ceiling is the API's ~100-requests-per-call limit,
 // not a "context window" limit — 10 just keeps batches small and retry-friendly)
-const BATCH_SIZE = () => 20;   // 10 chunks × 750 tokens = 7,500 tokens per API request
+const BATCH_SIZE = () => 10;   // 10 chunks × 750 tokens = 7,500 tokens per API request
 const PARALLEL_CALLS = () => 10; // Send 10 batches concurrently to clear the burst fast
 
 // Retry configuration (exponential backoff + jitter)
