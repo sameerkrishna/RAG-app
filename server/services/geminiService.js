@@ -141,39 +141,6 @@ export async function* streamResponse(prompt) {
   }
 }
 
-export async function* streamChatResponse(query, retrievedResults, sessionId, memoryService) {
-  const memoryContext = memoryService ? memoryService.formatMemoryForPrompt(sessionId) : '';
-  const contextList = retrievedResults || [];
-  const contextText = contextList.map((r, i) =>
-    `[${i + 1}] ${r.metadata?.filename || 'Unknown'}: ${r.text}`
-  ).join('\n\n');
-
-  const prompt = buildPrompt({
-    query,
-    context: contextText,
-    memoryContext,
-    coverage: { level: 'high' }
-  });
-
-  let fullResponse = '';
-
-  try {
-    for await (const chunk of streamResponse(prompt)) {
-      if (chunk.type === 'token') {
-        fullResponse += chunk.text;
-        yield chunk;
-      } else if (chunk.type === 'error') {
-        yield chunk;
-        return;
-      }
-    }
-
-    yield { type: 'complete', response: fullResponse };
-  } catch (error) {
-    yield { type: 'error', error: error.message };
-  }
-}
-
 export function getRefusalText() {
   return getRefusalResponse();
 }
