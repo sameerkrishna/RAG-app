@@ -187,16 +187,3 @@ export async function embedQuery(query) {
   return vectors[0];
 }
 
-export async function embedSingle(text) {
-  const vectors = await embedBatch([text], 'RETRIEVAL_DOCUMENT');
-  return vectors[0];
-}
-
-export function getRateLimitState() {
-  return {
-    maxTokensPerMinute: parseInt(process.env.EMBEDDING_RATE_LIMIT_TOKENS_PER_MINUTE) || 30000,
-    parallelCalls: PARALLEL_CALLS(),
-    maxChunksPerCall: BATCH_SIZE(),
-    outputDimensions: OUTPUT_DIMENSIONS()
-  };
-}
