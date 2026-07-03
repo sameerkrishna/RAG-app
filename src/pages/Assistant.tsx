@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import { useSeeding } from '../context/SeedingContext';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
+const INFO_DIALOG_SHOWN_KEY = 'rag_info_dialog_shown';
 
 // Module-level guard: persists across remounts (KB navigation) because the
 // JS module stays loaded, but is wiped on hard reload / new tab — unlike
@@ -37,13 +38,19 @@ export default function Assistant({ sessionId }: AssistantProps) {
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
   const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [infoDialogOpen, setInfoDialogOpen] = useState(true);
+  const [infoDialogOpen, setInfoDialogOpen] = useState(() => !sessionStorage.getItem(INFO_DIALOG_SHOWN_KEY));
   const [conversations, setConversations] = useState<StoredConversation[]>(() => getAllConversations());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const sessionInitRef = useRef<Promise<any> | null>(null);
+
+  useEffect(() => {
+    if (infoDialogOpen) {
+      sessionStorage.setItem(INFO_DIALOG_SHOWN_KEY, 'true');
+    }
+  }, []);
 
   useEffect(() => {
     if (activeConvId) {
