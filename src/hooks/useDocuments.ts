@@ -10,41 +10,77 @@ export function useDocuments(sessionId: string) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const sseConnectedRef = useRef(false);
   const isFetchingRef = useRef(false);
+  const dataLoadedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const initDoneRef = useRef(false);
+  const timeoutIdRef = useRef<number | null>(null);
 
-  // ─── Cleanup SSE on unmount ────────────────────────────────────────────────
+  // ─── Cleanup on unmount ──────────────────────────────────────────────────────
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
+      }
     };
   }, []);
 
-  // ─── Main fetch function ────────────────────────────────────────────────────
-  const fetchDocuments = useCallback(async () => {
-    // Prevent multiple simultaneous fetches
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+  // ─── Update documents safely ──────────────────────────────────────────────
+  const updateDocuments = useCallback((sessionDocs: Document[], globalDocs: Document[]) => {
+    if (!mountedRef.current) return;
+    setDocuments(sessionDocs);
+    setGlobalDocuments(globalDocs);
+    setLoading(false);
+    dataLoadedRef.current = true;
+  }, []);
 
-    if (!sessionId) {
-      setLoading(false);
-      isFetchingRef.current = false;
-      return;
-    }
-
-    // Show loader
-    setLoading(true);
-
-    // Close any existing SSE connection
+  // ─── Close SSE connection ─────────────────────────────────────────────────
+  const closeSSE = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     sseConnectedRef.current = false;
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+  }, []);
+
+  // ─── Main fetch function ────────────────────────────────────────────────────
+  const fetchDocuments = useCallback(async (isInitial = false) => {
+    // Prevent multiple simultaneous fetches
+    if (isFetchingRef.current) return;
+    
+    // If data is already loaded and this is not a forced refresh, skip
+    if (dataLoadedRef.current && !isInitial) {
+      console.log('[useDocuments] Data already loaded, skipping fetch.');
+      return;
+    }
+
+    if (!sessionId || !mountedRef.current) {
+      if (mountedRef.current) setLoading(false);
+      return;
+    }
+
+    isFetchingRef.current = true;
+
+    // Only show loader on initial load or when explicitly refreshing
+    if (isInitial || !dataLoadedRef.current) {
+      setLoading(true);
+    }
+
+    // Close any existing SSE connection
+    closeSSE();
 
     try {
-      // First, try direct fetch (data might already be ready)
+      // Try direct fetch first
       const response = await fetch('/api/documents', {
         headers: { 'x-session-id': sessionId }
       });
@@ -55,131 +91,143 @@ export function useDocuments(sessionId: string) {
       const globalDocs = data.globalDocuments || [];
       const hasData = sessionDocs.length > 0 || globalDocs.length > 0;
 
-      if (hasData) {
+      if (hasData && mountedRef.current) {
         // ✅ Data ready – update and stop
-        setDocuments(sessionDocs);
-        setGlobalDocuments(globalDocs);
-        setLoading(false);
+        updateDocuments(sessionDocs, globalDocs);
         isFetchingRef.current = false;
         console.log('[useDocuments] Data ready, loaded directly.');
         return;
       }
 
       // ❌ No data – connect to SSE to wait for seeding
-      console.log('[useDocuments] No data, connecting to SSE...');
-      const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
-      eventSourceRef.current = new EventSource(url);
-      sseConnectedRef.current = true;
+      if (mountedRef.current) {
+        console.log('[useDocuments] No data, connecting to SSE...');
+        const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
+        eventSourceRef.current = new EventSource(url);
+        sseConnectedRef.current = true;
 
-      // ─── Listen for seeding_complete event ──────────────────────────────
-      eventSourceRef.current.addEventListener('seeding_complete', (event: any) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('[useDocuments] ✅ Seeding complete!', data);
-          // Close SSE connection
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-            sseConnectedRef.current = false;
-          }
-          // Re-fetch documents (reset fetching flag so it can run again)
-          isFetchingRef.current = false;
-          fetchDocuments();
-        } catch (error) {
-          console.error('[useDocuments] Failed to parse SSE event:', error);
-        }
-      });
-
-      // ─── Listen for error events ─────────────────────────────────────────
-      eventSourceRef.current.addEventListener('error', (event: any) => {
-        console.error('[useDocuments] SSE error:', event);
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
-          sseConnectedRef.current = false;
-        }
-        // Fallback: try direct fetch after 3 seconds
-        setTimeout(() => {
-          if (loading) {
-            console.log('[useDocuments] SSE failed, trying direct fetch...');
+        // ─── Listen for seeding_complete event ──────────────────────────────
+        const onSeedingComplete = (event: any) => {
+          if (!mountedRef.current) return;
+          try {
+            const data = JSON.parse(event.data);
+            console.log('[useDocuments] ✅ Seeding complete!', data);
+            closeSSE();
+            // Re-fetch documents (but don't show loader again)
             isFetchingRef.current = false;
-            fetchDocuments();
+            fetchDocuments(false);
+          } catch (error) {
+            console.error('[useDocuments] Failed to parse SSE event:', error);
           }
-        }, 3000);
-      });
+        };
 
-      // ─── Listen for open event ───────────────────────────────────────────
-      eventSourceRef.current.onopen = () => {
-        console.log('[useDocuments] SSE connection opened');
-      };
+        // ─── Listen for error events ─────────────────────────────────────────
+        const onError = (event: any) => {
+          if (!mountedRef.current) return;
+          console.error('[useDocuments] SSE error:', event);
+          closeSSE();
+          // Fallback: try direct fetch after 2 seconds
+          setTimeout(() => {
+            if (mountedRef.current && !dataLoadedRef.current) {
+              console.log('[useDocuments] SSE failed, trying direct fetch...');
+              isFetchingRef.current = false;
+              fetchDocuments(false);
+            }
+          }, 2000);
+        };
 
-      // Safety timeout: if SSE doesn't respond in 30 seconds, try direct fetch again
-      setTimeout(() => {
-        if (loading && sseConnectedRef.current) {
-          console.log('[useDocuments] SSE timeout, trying direct fetch...');
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-            sseConnectedRef.current = false;
+        // ─── Listen for open event ───────────────────────────────────────────
+        const onOpen = () => {
+          if (mountedRef.current) {
+            console.log('[useDocuments] SSE connection opened');
           }
-          isFetchingRef.current = false;
-          fetchDocuments();
-        }
-      }, 30000);
+        };
+
+        eventSourceRef.current.addEventListener('seeding_complete', onSeedingComplete);
+        eventSourceRef.current.addEventListener('error', onError);
+        eventSourceRef.current.onopen = onOpen;
+
+        // Safety timeout: if SSE doesn't respond in 20 seconds, try direct fetch
+        timeoutIdRef.current = setTimeout(() => {
+          if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
+            console.log('[useDocuments] SSE timeout, trying direct fetch...');
+            closeSSE();
+            isFetchingRef.current = false;
+            fetchDocuments(false);
+          }
+        }, 20000) as unknown as number;
+      }
 
       isFetchingRef.current = false;
 
     } catch (error) {
       console.error('[useDocuments] Fetch error:', error);
+      
+      if (mountedRef.current && !dataLoadedRef.current) {
+        // Try SSE as fallback if not already connected
+        if (!sseConnectedRef.current) {
+          console.log('[useDocuments] Direct fetch failed, trying SSE...');
+          const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
+          eventSourceRef.current = new EventSource(url);
+          sseConnectedRef.current = true;
 
-      // Try SSE as fallback if not already connected
-      if (!sseConnectedRef.current) {
-        console.log('[useDocuments] Direct fetch failed, trying SSE...');
-        const url = `/api/documents/seeding-status?sessionId=${sessionId}`;
-        eventSourceRef.current = new EventSource(url);
-        sseConnectedRef.current = true;
+          eventSourceRef.current.addEventListener('seeding_complete', (event: any) => {
+            if (!mountedRef.current) return;
+            try {
+              const data = JSON.parse(event.data);
+              console.log('[useDocuments] ✅ Seeding complete!', data);
+              closeSSE();
+              isFetchingRef.current = false;
+              fetchDocuments(false);
+            } catch (error) {
+              console.error('[useDocuments] Failed to parse SSE event:', error);
+            }
+          });
 
-        eventSourceRef.current.addEventListener('seeding_complete', (event: any) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.log('[useDocuments] ✅ Seeding complete!', data);
-            if (eventSourceRef.current) {
-              eventSourceRef.current.close();
-              eventSourceRef.current = null;
-              sseConnectedRef.current = false;
+          eventSourceRef.current.addEventListener('error', () => {
+            if (!mountedRef.current) return;
+            console.error('[useDocuments] SSE error fallback');
+            closeSSE();
+            if (!dataLoadedRef.current) {
+              setLoading(false);
             }
             isFetchingRef.current = false;
-            fetchDocuments();
-          } catch (error) {
-            console.error('[useDocuments] Failed to parse SSE event:', error);
-          }
-        });
+          });
 
-        eventSourceRef.current.addEventListener('error', () => {
-          console.error('[useDocuments] SSE error fallback');
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close();
-            eventSourceRef.current = null;
-            sseConnectedRef.current = false;
+          eventSourceRef.current.onopen = () => {
+            if (mountedRef.current) {
+              console.log('[useDocuments] SSE connection opened (fallback)');
+            }
+          };
+
+          timeoutIdRef.current = setTimeout(() => {
+            if (mountedRef.current && !dataLoadedRef.current && sseConnectedRef.current) {
+              console.log('[useDocuments] SSE timeout, giving up.');
+              closeSSE();
+              setLoading(false);
+              isFetchingRef.current = false;
+            }
+          }, 20000) as unknown as number;
+        } else {
+          // If SSE already connected but we got an error, just show empty
+          if (!dataLoadedRef.current) {
+            setLoading(false);
           }
-          setLoading(false);
           isFetchingRef.current = false;
-        });
-
-        eventSourceRef.current.onopen = () => {
-          console.log('[useDocuments] SSE connection opened (fallback)');
-        };
+        }
       } else {
-        // If SSE already connected but we got an error, just show empty
-        setLoading(false);
         isFetchingRef.current = false;
       }
     }
-  }, [sessionId, loading]);
+  }, [sessionId, closeSSE, updateDocuments]);
 
   // ─── Initial fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
-    fetchDocuments();
+    // Only run once per sessionId
+    if (initDoneRef.current && sessionId) return;
+    initDoneRef.current = true;
+    dataLoadedRef.current = false;
+    fetchDocuments(true);
   }, [sessionId, fetchDocuments]);
 
   // ─── Upload document ────────────────────────────────────────────────────────
@@ -277,10 +325,10 @@ export function useDocuments(sessionId: string) {
                       : d
                   )
                 );
-                // Refresh the list after upload
-                // Reset fetching flag so it can run
+                // Refresh the list after upload (force re-fetch)
+                dataLoadedRef.current = false;
                 isFetchingRef.current = false;
-                fetchDocuments();
+                fetchDocuments(true);
                 setTimeout(() => setUploadState({ status: 'idle' }), 3000);
               } else if (currentEvent === 'error') {
                 console.error('[useDocuments] Server error:', payload);
@@ -324,14 +372,11 @@ export function useDocuments(sessionId: string) {
 
   // ─── Manual refresh ────────────────────────────────────────────────────────
   const refreshDocuments = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-      sseConnectedRef.current = false;
-    }
+    closeSSE();
+    dataLoadedRef.current = false;
     isFetchingRef.current = false;
-    fetchDocuments();
-  }, [fetchDocuments]);
+    fetchDocuments(true);
+  }, [closeSSE, fetchDocuments]);
 
   return {
     documents,
