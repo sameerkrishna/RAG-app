@@ -3,6 +3,7 @@ import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
 import { BM25 } from 'fast-bm25';
 import cohere from 'cohere-ai';
+import OpenAI from 'openai';
 
 const TOP_K = parseInt(process.env.TOP_K) || 20;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
@@ -14,9 +15,11 @@ const sessionBM25Indices = new Map();
 const sessionChunksMap = new Map();
 const sessionLastChunkCount = new Map();
 
-// Cohere client initialisation
-const cohereClient = new cohere.CohereClient({ token: process.env.COHERE_API_KEY });
-
+// Open Router Cohere client initialisation
+const openai = new OpenAI({
+  baseURL: 'https://openrouter.ai',
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
 /**
  * Rebuilds BM25 index and chunk lookup for a session if needed.
  */
@@ -91,24 +94,30 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
 
     // Stage 2: Cohere rerank
     const documentsForRerank = candidateChunks.map(chunk => chunk.text);
-    const rerankResponse = await cohereClient.rerank({
-      model: 'rerank-english-v3.0',
-      query: queryText,
-      documents: documentsForRerank,
-      topN: finalTopK
-    });
+    try {
+      const rerankResponse = await openai.post('/rerank', {
+        body: {
+          model: 'cohere/rerank-v3.5:free',
+          query: queryText,
+          documents: documentsForRerank,
+          top_n: finalTopK
+        }
+      });
 
-    return rerankResponse.results.map(result => {
-      const initialCandidate = candidateChunks[result.index];
-      return {
-        id: initialCandidate.id,
-        text: initialCandidate.text,
-        metadata: initialCandidate.metadata,
-        score: result.relevanceScore,   // map confidence → score for downstream
-        source_type: initialCandidate.metadata?.source_type || 'session'
-      };
-    });
-
+      return rerankResponse.results.map(result => {
+        const initialCandidate = candidateChunks[result.index];
+        return {
+          id: initialCandidate.id,
+          text: initialCandidate.text,
+          metadata: initialCandidate.metadata,
+          score: result.relevanceScore,   // map confidence → score for downstream
+          source_type: initialCandidate.metadata?.source_type || 'session'
+        };
+      });
+    } catch (error) {
+      console.error("OpenRouter free rerank failed:", error);
+      return [];
+    }
   } catch (error) {
     console.error(`❌ Search failure on session ${sessionId}:`, error);
     throw error;
