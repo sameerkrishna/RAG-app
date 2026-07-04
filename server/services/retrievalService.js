@@ -1,18 +1,126 @@
 import { getSessionCollection, queryCollection } from './chromaService.js';
 import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
+import { BM25 } from 'fast-bm25';
+import cohere from 'cohere-ai';
 
-const TOP_K = parseInt(process.env.TOP_K) || 5;
+const TOP_K = parseInt(process.env.TOP_K) || 20;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
 
 const cachedSessionCollections = new Map();
+
+// ── Hybrid search state (BM25 index, chunk lookup, chunk count snapshot) ──
+const sessionBM25Indices = new Map();
+const sessionChunksMap = new Map();
+const sessionLastChunkCount = new Map();
+
+// Cohere client initialisation
+const cohereClient = new cohere.CohereClient({ token: process.env.COHERE_API_KEY });
+
+/**
+ * Rebuilds BM25 index and chunk lookup for a session if needed.
+ */
+async function rebuildSessionBM25Index(sessionId, sessionCollection) {
+  const allData = await sessionCollection.get({ include: ['documents', 'metadatas'] });
+
+  if (allData.ids && allData.ids.length > 0) {
+    sessionBM25Indices.set(sessionId, new BM25(allData.documents));
+
+    const lookUpCache = new Map();
+    allData.ids.forEach((id, idx) => {
+      lookUpCache.set(id, {
+        id,
+        text: allData.documents[idx],
+        metadata: allData.metadatas[idx]
+      });
+    });
+    sessionChunksMap.set(sessionId, lookUpCache);
+    sessionLastChunkCount.set(sessionId, allData.ids.length);
+    console.log(`♻️ JIT Matrix Rebuilt for session ${sessionId} with ${allData.ids.length} chunks.`);
+  }
+}
+
+/**
+ * TWO-STAGE JIT RETRIEVAL ENGINE (BM25 + vector → RRF fusion → Cohere rerank)
+ */
+async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryText, queryEmbedding, finalTopK = 5) {
+  try {
+    // Just-in-time parity verification
+    const currentChromaCount = await sessionCollection.count();
+    const cachedCount = sessionLastChunkCount.get(sessionId) || 0;
+
+    if (currentChromaCount !== cachedCount || !sessionBM25Indices.has(sessionId)) {
+      await rebuildSessionBM25Index(sessionId, sessionCollection);
+    }
+
+    const currentBM25 = sessionBM25Indices.get(sessionId);
+    const currentLookupCache = sessionChunksMap.get(sessionId);
+
+    if (!currentBM25 || !currentLookupCache) return [];
+
+    // Stage 1: Hybrid retrieval (vector + BM25) with Reciprocal Rank Fusion
+    const vectorResults = await queryCollection(sessionCollection, queryEmbedding, TOP_K);
+    const bm25Scores = currentBM25.search(queryText);
+
+    const allChunkIds = Array.from(currentLookupCache.keys());
+    const lexicalResults = bm25Scores
+      .map((score, index) => ({ id: allChunkIds[index], score }))
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_K);
+
+    // RRF merge
+    const rrfScores = {};
+    const k_constant = 60;
+
+    vectorResults.forEach((item, index) => {
+      rrfScores[item.id] = (rrfScores[item.id] || 0) + (1 / (k_constant + (index + 1)));
+    });
+
+    lexicalResults.forEach((item, index) => {
+      rrfScores[item.id] = (rrfScores[item.id] || 0) + (1 / (k_constant + (index + 1)));
+    });
+
+    const candidateIds = Object.keys(rrfScores)
+      .sort((a, b) => rrfScores[b] - rrfScores[a])
+      .slice(0, TOP_K);
+
+    const candidateChunks = candidateIds.map(id => currentLookupCache.get(id)).filter(Boolean);
+
+    if (candidateChunks.length === 0) return [];
+
+    // Stage 2: Cohere rerank
+    const documentsForRerank = candidateChunks.map(chunk => chunk.text);
+    const rerankResponse = await cohereClient.rerank({
+      model: 'rerank-english-v3.0',
+      query: queryText,
+      documents: documentsForRerank,
+      topN: finalTopK
+    });
+
+    return rerankResponse.results.map(result => {
+      const initialCandidate = candidateChunks[result.index];
+      return {
+        id: initialCandidate.id,
+        text: initialCandidate.text,
+        metadata: initialCandidate.metadata,
+        score: result.relevanceScore,   // map confidence → score for downstream
+        source_type: initialCandidate.metadata?.source_type || 'session'
+      };
+    });
+
+  } catch (error) {
+    console.error(`❌ Search failure on session ${sessionId}:`, error);
+    throw error;
+  }
+}
 
 async function getOrCacheSessionCollection(sessionId) {
   if (cachedSessionCollections.has(sessionId)) {
     return cachedSessionCollections.get(sessionId);
   }
   try {
-    const { collection } = await getSessionCollection(sessionId); // destructure
+    const { collection } = await getSessionCollection(sessionId);
     if (collection) cachedSessionCollections.set(sessionId, collection);
     return collection;
   } catch {
@@ -20,7 +128,7 @@ async function getOrCacheSessionCollection(sessionId) {
   }
 }
 
-function calculateCoverage(results, topK = TOP_K) {
+function calculateCoverage(results, topK = 5) {
   if (!results || results.length === 0) return { confidence: 0, topScore: 0 };
   const scores = results.slice(0, topK).map(r => Math.max(0, r.score));
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
@@ -30,8 +138,9 @@ function calculateCoverage(results, topK = TOP_K) {
   };
 }
 
+// ── Main retrieval function (modified) ─────────────────────────────────
 export async function retrieveForQuery(query, sessionId, options = {}) {
-  const topK = options.topK || TOP_K;
+  const topK = options.topK || 5;
 
   try {
     const [queryEmbedding, sessionCollection] = await Promise.all([
@@ -44,8 +153,10 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
       return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding };
     }
 
-    const rawResults = await queryCollection(sessionCollection, queryEmbedding, topK)
-      .catch(() => []);
+    // 🚀 Replace the old simple vector search with the hybrid pipeline
+    const rawResults = await dynamicSessionSearchPipeline(
+      sessionId, sessionCollection, query, queryEmbedding, topK
+    );
 
     const results = rawResults.map(r => ({
       ...r,
@@ -58,7 +169,7 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
 
     console.log('🔍 Query:', query);
     console.log('📊 Coverage:', { ...coverage, level });
-    console.log('📈 Raw scores:', results.map(r => r.score.toFixed(4)));
+    console.log('📈 Scores:', results.map(r => r.score.toFixed(4)));
 
     return {
       results,
