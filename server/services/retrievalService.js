@@ -2,8 +2,6 @@ import { getSessionCollection, queryCollection } from './chromaService.js';
 import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
 import { BM25 } from 'fast-bm25';
-import cohere from 'cohere-ai';
-import OpenAI from 'openai';
 
 const TOP_K = parseInt(process.env.TOP_K) || 20;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
@@ -48,7 +46,7 @@ async function rebuildSessionBM25Index(sessionId, sessionCollection) {
  */
 async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryText, queryEmbedding, finalTopK = 5) {
   try {
-    // Just-in-time parity verification
+    // Just-in-time parity verification – rebuild BM25 if chunks changed
     const currentChromaCount = await sessionCollection.count();
     const cachedCount = sessionLastChunkCount.get(sessionId) || 0;
 
@@ -92,31 +90,63 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
 
     if (candidateChunks.length === 0) return [];
 
-    // Stage 2: Cohere rerank
+    // Stage 2: Cohere rerank via OpenRouter
     const documentsForRerank = candidateChunks.map(chunk => chunk.text);
+
     try {
-      const response = await openai.post('/rerank', {
-        body: {
-          model: 'cohere/rerank-v3.5:free',
+      const response = await fetch('https://openrouter.ai/api/v1/rerank', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'cohere/rerank-v3.5:free',   // free tier rerank model
           query: queryText,
           documents: documentsForRerank,
-          top_n: finalTopK
-        }
+          top_n: finalTopK,
+        }),
       });
-      const rerankResponse = response.results;
-      return rerankResponse.map(result => {
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenRouter rerank failed: ${response.status} ${errorText}`);
+      }
+
+      const rerankData = await response.json();
+
+      // If rerank returns nothing or fails, fall back to RRF top candidates
+      if (!rerankData.results || rerankData.results.length === 0) {
+        console.warn('⚠️ Rerank returned empty; falling back to RRF candidates.');
+        return candidateChunks.slice(0, finalTopK).map(chunk => ({
+          id: chunk.id,
+          text: chunk.text,
+          metadata: chunk.metadata,
+          score: 0.5,   // neutral score
+          source_type: chunk.metadata?.source_type || 'session',
+        }));
+      }
+
+      return rerankData.results.map(result => {
         const initialCandidate = candidateChunks[result.index];
         return {
           id: initialCandidate.id,
           text: initialCandidate.text,
           metadata: initialCandidate.metadata,
           score: result.relevanceScore,   // map confidence → score for downstream
-          source_type: initialCandidate.metadata?.source_type || 'session'
+          source_type: initialCandidate.metadata?.source_type || 'session',
         };
       });
-    } catch (error) {
-      console.error("OpenRouter free rerank failed:", error);
-      return [];
+    } catch (rerankError) {
+      console.error('OpenRouter rerank error:', rerankError);
+      // Graceful fallback: return top candidates from RRF without reranking
+      return candidateChunks.slice(0, finalTopK).map(chunk => ({
+        id: chunk.id,
+        text: chunk.text,
+        metadata: chunk.metadata,
+        score: 0.5,
+        source_type: chunk.metadata?.source_type || 'session',
+      }));
     }
   } catch (error) {
     console.error(`❌ Search failure on session ${sessionId}:`, error);
