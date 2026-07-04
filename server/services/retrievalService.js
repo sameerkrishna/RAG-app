@@ -96,7 +96,7 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'cohere/rerank-v3.5:free',   // free tier rerank model
+          model: 'cohere/rerank-v3.5', 
           query: queryText,
           documents: documentsForRerank,
           top_n: finalTopK,
