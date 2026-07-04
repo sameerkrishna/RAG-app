@@ -130,7 +130,7 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
 
   return rerankData.results.map(result => {
     const initialCandidate = candidateChunks[result.index];
-    const score = result.relevance_Score ?? result.score ?? 0.5;
+    const score = result.relevance_score ?? result.score ?? 0.5;
     return safeResult(initialCandidate, score);
   });
 } catch (rerankError) {
