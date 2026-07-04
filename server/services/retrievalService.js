@@ -121,7 +121,7 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
   }
 
   const rerankData = await response.json();
-  console.log('OpenRouter rerank raw response:', JSON.stringify(rerankData).slice(0, 200)); // first 200 chars
+  console.log('OpenRouter rerank raw response:', JSON.stringify(rerankData)); // first 200 chars
 
   if (!rerankData.results || rerankData.results.length === 0) {
     console.warn('⚠️ Rerank returned empty; falling back to RRF candidates.');
