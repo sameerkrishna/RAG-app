@@ -122,12 +122,15 @@ export async function handleChatStream(req, res) {
    - Respond warmly and naturally. Do NOT mention the knowledge base or documents at all.
    - Do NOT add any citations.
 
-2. FACTUAL QUESTIONS WITH CONTEXT (context below is relevant):
-   - Answer strictly using the numbered context provided.
-   - Cite sources inline as [1] [2] — always separate brackets, never [1, 2].
-   - Only cite numbers you actually used.
+2. FACTUAL & CONCEPTUAL QUESTIONS WITH CONTEXT (context below contains related terms or definitions):
+   - Answer the question by anchoring your core facts in the provided numbered context.
+   - You are explicitly permitted to use your own pre-trained AI knowledge to explain, contextualize, or expand on the importance, implications, or real-world utility of the concepts found in the documents.
+   - If the user asks about the "importance," "why," or "how" of a metric defined in the context, use your pre-trained knowledge to thoroughly explain that context in a detailed, professional manner.
+   - Organize your response using clear markdown structure, including bold text or bullet points for readability.
+   - Cite sources inline as [1] [2] — always separate brackets, never.
+   - Only cite numbers for the specific factual claims pulled directly from the text.
 
-3. FACTUAL QUESTIONS WITHOUT CONTEXT (context is empty or irrelevant):
+3. FACTUAL QUESTIONS WITHOUT CONTEXT (context is completely empty or completely irrelevant to the topic):
    - Politely decline in your own words — vary your phrasing naturally.
    - Do NOT add citations.
    - Do NOT use a fixed template or robotic response.
