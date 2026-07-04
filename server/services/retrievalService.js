@@ -107,7 +107,7 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'cohere/rerank-english-v3.0',  // ✅ corrected
+      model: 'cohere/rerank-v3.5',  // ✅ corrected
       query: queryText,
       documents: documentsForRerank,
       top_n: finalTopK,
