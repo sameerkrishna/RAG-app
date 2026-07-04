@@ -95,7 +95,7 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
     // Stage 2: Cohere rerank
     const documentsForRerank = candidateChunks.map(chunk => chunk.text);
     try {
-      const rerankResponse = await openai.post('/rerank', {
+      const response = await openai.post('/rerank', {
         body: {
           model: 'cohere/rerank-v3.5:free',
           query: queryText,
@@ -103,8 +103,8 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
           top_n: finalTopK
         }
       });
-
-      return rerankResponse.results.map(result => {
+      const rerankResponse = response.results;
+      return rerankResponse.map(result => {
         const initialCandidate = candidateChunks[result.index];
         return {
           id: initialCandidate.id,
