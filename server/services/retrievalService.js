@@ -13,11 +13,6 @@ const sessionBM25Indices = new Map();
 const sessionChunksMap = new Map();
 const sessionLastChunkCount = new Map();
 
-// Open Router Cohere client initialisation
-const openai = new OpenAI({
-  baseURL: 'https://openrouter.ai',
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 /**
  * Rebuilds BM25 index and chunk lookup for a session if needed.
  */
