@@ -100,44 +100,43 @@ async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryT
     });
 
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/rerank', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'cohere/rerank-v3.5',
-          query: queryText,
-          documents: documentsForRerank,
-          top_n: finalTopK,
-        }),
-      });
+  const response = await fetch('https://openrouter.ai/api/v1/rerank', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'cohere/rerank-english-v3.0',  // ✅ corrected
+      query: queryText,
+      documents: documentsForRerank,
+      top_n: finalTopK,
+    }),
+  });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OpenRouter rerank failed: ${response.status} ${errorText}`);
-      }
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('OpenRouter rerank HTTP error:', response.status, errorText);
+    throw new Error(`OpenRouter rerank failed: ${response.status} ${errorText}`);
+  }
 
-      const rerankData = await response.json();
+  const rerankData = await response.json();
 
-      // If rerank returns empty results, fall back to RRF top candidates
-      if (!rerankData.results || rerankData.results.length === 0) {
-        console.warn('⚠️ Rerank returned empty; falling back to RRF candidates.');
-        return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
-      }
+  if (!rerankData.results || rerankData.results.length === 0) {
+    console.warn('⚠️ Rerank returned empty; falling back to RRF candidates.');
+    return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
+  }
 
-      return rerankData.results.map(result => {
-        const initialCandidate = candidateChunks[result.index];
-        // Use relevanceScore (or score as fallback for non-Cohere models)
-        const score = result.relevanceScore ?? result.score ?? 0.5;
-        return safeResult(initialCandidate, score);
-      });
-    } catch (rerankError) {
-      console.error('OpenRouter rerank error:', rerankError);
-      // Graceful fallback: return top candidates from RRF without reranking
-      return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
-    }
+  return rerankData.results.map(result => {
+    const initialCandidate = candidateChunks[result.index];
+    const score = result.relevanceScore ?? result.score ?? 0.5;
+    return safeResult(initialCandidate, score);
+  });
+} catch (rerankError) {
+  console.error('OpenRouter rerank error:', rerankError);
+  // fallback
+  return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
+}
   } catch (error) {
     console.error(`❌ Search failure on session ${sessionId}:`, error);
     throw error;
