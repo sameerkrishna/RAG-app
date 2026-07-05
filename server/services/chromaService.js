@@ -211,7 +211,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
   // 1. Define global RRF bounds based on your weights [0.7, 0.3] and limits (100)
   // Max possible raw RRF: 1 / (60 + 1) = 0.0163934
   // Min possible raw RRF: 1 / (60 + 100) = 0.0062500
-  const MAX_RRF = 1 / 61;
+  const MAX_RRF = 2 / 61;
   const MIN_RRF = 1 / 160;
 
   return ids.map((id, idx) => {
