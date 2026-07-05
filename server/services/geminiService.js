@@ -38,7 +38,7 @@ function buildGenerationRequest(model, prompt) {
     model,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
-      temperature: 0.4,
+      temperature: 0.7,
       topP: 0.95,
       maxOutputTokens: 2048
     }
