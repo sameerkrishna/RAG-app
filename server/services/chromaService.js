@@ -159,7 +159,11 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
       nResults: topK,
       include: ['documents', 'metadatas', 'distances']
     });
-
+    
+    console.log('=== SEARCH RAW RESPONSE ===');
+    console.log(JSON.stringify(results, null, 2));
+    console.log('===  RAW RESPONSE ===');
+    
     if (!results.ids || results.ids.length === 0 || results.ids[0].length === 0) {
       return [];
     }
