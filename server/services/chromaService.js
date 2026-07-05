@@ -201,12 +201,12 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
     }
 
     // Map results to the same shape as queryCollection()
-    return results.ids.map((id, idx) => ({
-       id,
-       text: results.documents?.[idx] ?? '',
-       metadata: results.metadatas?.[idx] ?? {},
-       distance: results.distances?.[idx] ?? 0,
-       score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
+    return results.ids[0].map((id, idx) => ({
+      id,
+      text: results.documents[0][idx],
+      metadata: results.metadatas[0][idx],
+      distance: results.distances[0][idx],
+      score: 1 - results.distances[0][idx]
     }));
     
   } catch (error) {
