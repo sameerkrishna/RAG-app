@@ -211,7 +211,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
        id,
        text: results.documents?.[idx] ?? '',
        metadata: results.metadatas?.[idx] ?? {},
-       distance: results.distances?.[idx] ?? 0,
+       distance: 1- (results.scores?.[idx] ?? 0),
        score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
     }));
     
