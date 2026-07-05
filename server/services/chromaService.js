@@ -204,29 +204,37 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
     }
 
   const ids = raw.ids[0];
-    const docs = raw.documents?.[0] ?? [];
-    const metas = raw.metadatas?.[0] ?? [];
-    const scores = raw.scores?.[0] ?? [];
+  const docs = raw.documents?.[0] ?? [];
+  const metas = raw.metadatas?.[0] ?? [];
+  const scores = raw.scores?.[0] ?? [];
 
-     // RRF scores from Chroma are typically negative (e.g., -0.0165).
-    // Convert them to a positive relevance score that behaves like your old 1‑distance.
-    const maxAbsScore = Math.max(...scores.map(s => Math.abs(s)), 1e-6);
+  // 1. Define global RRF bounds based on your weights [0.7, 0.3] and limits (100)
+  // Max possible raw RRF: 1 / (60 + 1) = 0.0163934
+  // Min possible raw RRF: 1 / (60 + 100) = 0.0062500
+  const MAX_RRF = 1 / 61;
+  const MIN_RRF = 1 / 160;
 
-    return ids.map((id, idx) => {
-      const rawScore = scores[idx] ?? -0.5;
-      // Normalise to [0,1] – higher is better (negate and divide by max abs)
-      const normalizedScore = Math.abs(rawScore) / maxAbsScore; // now 0–1
-      // Optionally boost a bit to match your old score range (0.5‑ish)
-      const finalScore = Math.round(normalizedScore * 100) / 100;
+  return ids.map((id, idx) => {
+    // Chroma returns negative values (e.g. -0.01639), convert to positive raw RRF
+    const rawRRF = Math.abs(scores[idx] ?? MIN_RRF);
+    
+    // 2. Linear min-max normalization to fit perfectly between 0.0 and 1.0
+    let normalizedScore = (rawRRF - MIN_RRF) / (MAX_RRF - MIN_RRF);
+    
+    // Boundary protection
+    normalizedScore = Math.max(0, Math.min(1, normalizedScore));
 
-      return {
-        id,
-        text: docs[idx] ?? '',
-        metadata: metas[idx] ?? {},
-        distance: 1-finalScore,                       // not provided by hybrid search
-        score: finalScore                  // guaranteed numeric
-      };
-    });
+    const finalScore = Math.round(normalizedScore * 100) / 100;
+
+    return {
+      id,
+      text: docs[idx] ?? '',
+      metadata: metas[idx] ?? {},
+      distance: 1 - finalScore, 
+      score: finalScore                  
+    };
+  });
+
     
   } catch (error) {
     console.error('Hybrid query failed, falling back to dense-only:', error.message);
