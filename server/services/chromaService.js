@@ -176,7 +176,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
       const rawRRF = Math.abs(scores[idx] ?? MIN_RRF);
 
       // 2. Linear min-max normalization to fit perfectly between 0.0 and 1.0
-      let normalizedScore = (rawRRF - MIN_RRF) / (MAX_RRF - MIN_RRF);
+      let normalizedScore = (rawRRF ) / (MAX_RRF);
 
       // Boundary protection
       normalizedScore = Math.max(0, Math.min(1, normalizedScore));
