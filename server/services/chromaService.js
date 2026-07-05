@@ -1,7 +1,19 @@
-import { CloudClient } from 'chromadb';
+import { CloudClient, Schema, SparseVectorIndexConfig, DOCUMENT_KEY, Search, Knn, Rrf } from 'chromadb';
+import { ChromaBm25EmbeddingFunction } from '@chroma-core/chroma-bm25';
 import { v4 as uuidv4 } from 'uuid';
 
 const BATCH_SIZE = 300;
+
+// ── Shared schema: dense embeddings (managed externally) + BM25 sparse index ──
+const bm25EmbeddingFunction = new ChromaBm25EmbeddingFunction();
+const collectionSchema = new Schema().createIndex(
+  new SparseVectorIndexConfig({
+    embeddingFunction: bm25EmbeddingFunction,
+    sourceKey: DOCUMENT_KEY,
+    bm25: true
+  }),
+  'sparse_bm25'
+);
 
 let cloudClient = null;
 let globalCollection = null;
@@ -38,10 +50,11 @@ function getCloudClient() {
 export async function getGlobalCollection() {
   if (!globalCollection) {
     const client = getCloudClient();
-    const collectionName = process.env.CHROMA_GLOBAL_COLLECTION || 'dev';
+    const collectionName = process.env.CHROMA_GLOBAL_COLLECTION || 'seed_db';
     try {
       globalCollection = await client.getOrCreateCollection({
         name: collectionName,
+        schema: collectionSchema,
         metadata: {
           description: 'Permanent seed documents for RAG',
           type: 'global_knowledge'
@@ -83,6 +96,7 @@ export async function getSessionCollection(sessionId) {
   } catch {
     collection = await client.createCollection({
       name: collectionName,
+      schema: collectionSchema,
       metadata: {
         type: 'session_upload',
         session_id: sessionId,
@@ -118,16 +132,16 @@ export async function deleteSessionCollection(sessionId) {
 export async function addVectors(collection, vectors, embeddings, ids) {
   try {
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-      const batchIds        = ids.slice(i, i + BATCH_SIZE);
+      const batchIds = ids.slice(i, i + BATCH_SIZE);
       const batchEmbeddings = embeddings.slice(i, i + BATCH_SIZE);
-      const batchDocuments  = vectors.slice(i, i + BATCH_SIZE).map(v => v.text);
-      const batchMetadatas  = vectors.slice(i, i + BATCH_SIZE).map(v => v.metadata);
+      const batchDocuments = vectors.slice(i, i + BATCH_SIZE).map(v => v.text);
+      const batchMetadatas = vectors.slice(i, i + BATCH_SIZE).map(v => v.metadata);
 
       await collection.add({
-        ids:        batchIds,
+        ids: batchIds,
         embeddings: batchEmbeddings,
-        documents:  batchDocuments,
-        metadatas:  batchMetadatas
+        documents: batchDocuments,
+        metadatas: batchMetadatas
       });
       console.log(`  [addVectors] batch ${Math.floor(i / BATCH_SIZE) + 1}: added ${batchIds.length} vectors`);
     }
@@ -160,6 +174,52 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
   } catch (error) {
     console.error('Failed to query collection:', error);
     throw error;
+  }
+}
+
+/**
+ * Hybrid search using Chroma Cloud Search API with RRF (dense + sparse BM25).
+ * Returns results in the same shape as queryCollection() for backward compatibility.
+ */
+export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5) {
+  try {
+    const search = new Search()
+      .rank(new Rrf({
+        ranks: [
+          Knn({ query: queryEmbedding, returnRank: true, limit: 100 }),
+          Knn({ query: queryText, key: 'sparse_bm25', returnRank: true, limit: 100 })
+        ],
+        weights: [0.7, 0.3],
+        k: 60
+      }))
+      .limit(topK);
+
+    const results = await collection.search(search);
+
+    if (!results || !results.ids || results.ids.length === 0) {
+      return [];
+    }
+
+    // Map results to the same shape as queryCollection()
+    // return results.ids.map((id, idx) => ({
+    //   id,
+    //   text: results.documents?.[idx] ?? '',
+    //   metadata: results.metadatas?.[idx] ?? {},
+    //   distance: results.distances?.[idx] ?? 0,
+    //   score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
+    // }));
+    return results.results.map((item) => ({
+      id: item.id,
+      text: item.document,
+      metadata: item.metadata || {},
+      score: item.score,
+      // distance not provided; keep for backward compat if needed, default to 0
+      distance: 0
+    }));
+  } catch (error) {
+    console.error('Hybrid query failed, falling back to dense-only:', error.message);
+    // Graceful fallback to dense-only search for backward compatibility
+    return queryCollection(collection, queryEmbedding, topK);
   }
 }
 
@@ -227,17 +287,17 @@ export async function listDocuments(collection) {
       if (!batch.ids || batch.ids.length === 0) break;
 
       batch.ids.forEach((id, idx) => {
-        const meta  = batch.metadatas[idx];
+        const meta = batch.metadatas[idx];
         const docId = meta.document_id;
 
         if (!documentsMap.has(docId)) {
           documentsMap.set(docId, {
-            document_id:      docId,
-            filename:         meta.filename,
-            chunk_count:      0,
-            page_count:       meta.page_number || 1,
+            document_id: docId,
+            filename: meta.filename,
+            chunk_count: 0,
+            page_count: meta.page_number || 1,
             upload_timestamp: meta.upload_timestamp,
-            source_type:      meta.source_type,
+            source_type: meta.source_type,
             first_chunk_text: batch.documents[idx]
           });
         }
