@@ -224,6 +224,8 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
     // Boundary protection
     normalizedScore = Math.max(0, Math.min(1, normalizedScore));
 
+    //const finalScore = Math.round(normalizedScore * 100) / 100;
+
     return {
       id,
       text: docs[idx] ?? '',
