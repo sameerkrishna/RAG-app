@@ -17,7 +17,6 @@ const collectionSchema = new Schema().createIndex(
 
 let cloudClient = null;
 let globalCollection = null;
-const sessionCollections = new Map();
 
 function getCloudClient() {
   if (!cloudClient) {
@@ -71,59 +70,13 @@ export async function getGlobalCollection() {
 }
 
 /**
- * Returns { collection, isNew }.
- * isNew = true  → freshly created, needs seeding from global.
- * isNew = false → already existed on Chroma Cloud, respect its current state.
+ * Returns the single shared collection.
+ * Drop-in replacement for the old getSessionCollection — callers that
+ * previously destructured { collection } will still work.
  */
-export async function getSessionCollection(sessionId) {
-  if (sessionCollections.has(sessionId)) {
-    return { collection: sessionCollections.get(sessionId), isNew: false };
-  }
-
-  const client = getCloudClient();
-  const collectionName = `session_${sessionId}`;
-
-  let collection;
-  let isNew;
-
-  try {
-    collection = await client.getCollection({
-      name: collectionName,
-      embeddingFunction: null
-    });
-    isNew = false;
-    console.log(`\u267b\ufe0f  Session collection exists, reusing: ${collectionName}`);
-  } catch {
-    collection = await client.createCollection({
-      name: collectionName,
-      schema: collectionSchema,
-      metadata: {
-        type: 'session_upload',
-        session_id: sessionId,
-        created: new Date().toISOString()
-      },
-      embeddingFunction: null
-    });
-    isNew = true;
-    console.log(`\u2705 Session collection created: ${collectionName}`);
-  }
-
-  sessionCollections.set(sessionId, collection);
-  return { collection, isNew };
-}
-
-export async function deleteSessionCollection(sessionId) {
-  const collectionName = `session_${sessionId}`;
-  try {
-    const client = getCloudClient();
-    await client.deleteCollection({ name: collectionName });
-    sessionCollections.delete(sessionId);
-    console.log(`\u2705 Session collection deleted: ${collectionName}`);
-    return true;
-  } catch (error) {
-    console.error(`Failed to delete session collection ${collectionName}:`, error);
-    return false;
-  }
+export async function getCollection() {
+  const collection = await getGlobalCollection();
+  return { collection, isNew: false };
 }
 
 /**
@@ -152,15 +105,17 @@ export async function addVectors(collection, vectors, embeddings, ids) {
   }
 }
 
-export async function queryCollection(collection, queryEmbedding, topK = 5) {
+export async function queryCollection(collection, queryEmbedding, topK = 5, where = undefined) {
   try {
-    const results = await collection.query({
+    const queryOpts = {
       queryEmbeddings: [queryEmbedding],
       nResults: topK,
       include: ['documents', 'metadatas', 'distances']
-    });
-    
-  
+    };
+    if (where) queryOpts.where = where;
+
+    const results = await collection.query(queryOpts);
+
     if (!results.ids || results.ids.length === 0 || results.ids[0].length === 0) {
       return [];
     }
@@ -181,19 +136,21 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
 /**
  * Hybrid search using Chroma Cloud Search API with RRF (dense + sparse BM25).
  * Returns results in the same shape as queryCollection() for backward compatibility.
+ * Accepts an optional `where` clause for metadata filtering (e.g. session_id $in).
  */
-export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5) {
+export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5, where = undefined) {
   try {
-    const search = new Search()
+    let search = new Search()
       .rank(Rrf({
         ranks: [
           Knn({ query: queryEmbedding, returnRank: true, limit: 100 }),
           Knn({ query: queryText, key: 'sparse_bm25', returnRank: true, limit: 100 })
         ],
-        weights: [0.8, 0.2],
+        weights: [0.9, 0.1],
         k: 60
       }))
-      .select("#document","#metadata", "#score")
+      .where(where)
+      .select("#document", "#metadata", "#score")
       .limit(topK);
 
     const raw = await collection.search(search);
@@ -203,50 +160,50 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
       return [];
     }
 
-  const ids = raw.ids[0];
-  const docs = raw.documents?.[0] ?? [];
-  const metas = raw.metadatas?.[0] ?? [];
-  const scores = raw.scores?.[0] ?? [];
+    const ids = raw.ids[0];
+    const docs = raw.documents?.[0] ?? [];
+    const metas = raw.metadatas?.[0] ?? [];
+    const scores = raw.scores?.[0] ?? [];
 
-  // 1. Define global RRF bounds based on your weights [0.7, 0.3] and limits (100)
-  // Max possible raw RRF: 1 / (60 + 1) = 0.0163934
-  // Min possible raw RRF: 1 / (60 + 100) = 0.0062500
-  const MAX_RRF = 1 / 61;
-  const MIN_RRF = 1 / 160;
+    // 1. Define global RRF bounds based on your weights [0.7, 0.3] and limits (100)
+    // Max possible raw RRF: 1 / (60 + 1) = 0.0163934
+    // Min possible raw RRF: 1 / (60 + 100) = 0.0062500
+    const MAX_RRF = 1 / 61;
+    const MIN_RRF = 1 / 160;
 
-  return ids.map((id, idx) => {
-    // Chroma returns negative values (e.g. -0.01639), convert to positive raw RRF
-    const rawRRF = Math.abs(scores[idx] ?? MIN_RRF);
-    
-    // 2. Linear min-max normalization to fit perfectly between 0.0 and 1.0
-    let normalizedScore = (rawRRF - MIN_RRF) / (MAX_RRF - MIN_RRF);
-    
-    // Boundary protection
-    normalizedScore = Math.max(0, Math.min(1, normalizedScore));
+    return ids.map((id, idx) => {
+      // Chroma returns negative values (e.g. -0.01639), convert to positive raw RRF
+      const rawRRF = Math.abs(scores[idx] ?? MIN_RRF);
 
-    //const finalScore = Math.round(normalizedScore * 100) / 100;
+      // 2. Linear min-max normalization to fit perfectly between 0.0 and 1.0
+      let normalizedScore = (rawRRF - MIN_RRF) / (MAX_RRF - MIN_RRF);
 
-    return {
-      id,
-      text: docs[idx] ?? '',
-      metadata: metas[idx] ?? {},
-      distance: 1 - normalizedScore, 
-      score: normalizedScore                  
-    };
-  });
+      // Boundary protection
+      normalizedScore = Math.max(0, Math.min(1, normalizedScore));
 
-    
+      //const finalScore = Math.round(normalizedScore * 100) / 100;
+
+      return {
+        id,
+        text: docs[idx] ?? '',
+        metadata: metas[idx] ?? {},
+        distance: 1 - normalizedScore,
+        score: normalizedScore
+      };
+    });
+
+
   } catch (error) {
     console.error('Hybrid query failed, falling back to dense-only:', error.message);
     // Graceful fallback to dense-only search for backward compatibility
-    return queryCollection(collection, queryEmbedding, topK);
+    return queryCollection(collection, queryEmbedding, topK, where);
   }
 }
 
 /**
  * Delete all vectors for a given documentId.
  * Paginates collection.get() in BATCH_SIZE chunks so documents with
- * many chunks (> default 100 limit) are fully deleted.
+ * many chunks (>default 100 limit) are fully deleted.
  */
 export async function deleteDocumentVectors(collection, documentId) {
   try {
@@ -278,6 +235,42 @@ export async function deleteDocumentVectors(collection, documentId) {
   }
 }
 
+/**
+ * Delete all vectors belonging to a specific session.
+ * Uses session_id metadata filter to find and remove them in batches.
+ */
+export async function deleteSessionVectors(sessionId) {
+  try {
+    const collection = await getGlobalCollection();
+    const allIds = [];
+    let offset = 0;
+
+    while (true) {
+      const batch = await collection.get({
+        where: { session_id: sessionId },
+        include: [],
+        limit: BATCH_SIZE,
+        offset
+      });
+
+      if (!batch.ids || batch.ids.length === 0) break;
+      allIds.push(...batch.ids);
+
+      if (batch.ids.length < BATCH_SIZE) break;
+      offset += BATCH_SIZE;
+    }
+
+    if (allIds.length > 0) {
+      await collection.delete({ ids: allIds });
+    }
+    console.log(`\u2705 Deleted ${allIds.length} session vectors for session_id=${sessionId}`);
+    return allIds.length;
+  } catch (error) {
+    console.error(`Failed to delete session vectors for ${sessionId}:`, error);
+    return 0;
+  }
+}
+
 export async function getDocumentCount(collection) {
   try {
     return await collection.count();
@@ -291,18 +284,22 @@ export async function getDocumentCount(collection) {
  * List all unique documents in a collection.
  * Paginates collection.get() with BATCH_SIZE=300 so collections larger
  * than Chroma's default get() limit (100) are fully enumerated.
+ * Accepts an optional `where` clause for metadata filtering.
  */
-export async function listDocuments(collection) {
+export async function listDocuments(collection, where = undefined) {
   try {
     const documentsMap = new Map();
     let offset = 0;
 
     while (true) {
-      const batch = await collection.get({
+      const getOpts = {
         include: ['metadatas', 'documents'],
         limit: BATCH_SIZE,
         offset
-      });
+      };
+      if (where) getOpts.where = where;
+
+      const batch = await collection.get(getOpts);
 
       if (!batch.ids || batch.ids.length === 0) break;
 
@@ -355,39 +352,5 @@ export async function healthCheck() {
       error: error.message,
       timestamp: new Date().toISOString()
     };
-  }
-}
-
-export async function cleanupSessionCollections() {
-  try {
-    const client = getCloudClient();
-    const collections = await client.listCollections();
-
-    const sessionCollectionNames = collections
-      .map(c => (typeof c === 'string' ? c : c.name))
-      .filter(name => name.startsWith('session_'));
-
-    if (sessionCollectionNames.length === 0) {
-      console.log('\u2705 No stale session collections found.');
-      return;
-    }
-
-    console.log(`\ud83e\uddf9 Cleaning up ${sessionCollectionNames.length} stale session collection(s)...`);
-
-    await Promise.allSettled(
-      sessionCollectionNames.map(async name => {
-        try {
-          await client.deleteCollection({ name });
-          console.log(`  \u2705 Deleted: ${name}`);
-        } catch (err) {
-          console.warn(`  \u26a0\ufe0f Could not delete ${name}:`, err.message);
-        }
-      })
-    );
-
-    sessionCollections.clear();
-    console.log('\u2705 Session collection cleanup complete.');
-  } catch (error) {
-    console.warn('\u26a0\ufe0f Session cleanup failed (non-fatal):', error.message);
   }
 }

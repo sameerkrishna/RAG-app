@@ -11,7 +11,7 @@ import {
   CorruptedPDFError,
   InvalidFileTypeError,
 } from '../utils/errors.js';
-import { getSessionCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
+import { getCollection, addVectors, deleteDocumentVectors } from '../services/chromaService.js';
 import { chunkText, cleanText } from '../utils/chunker.js';
 import { embedSingleBatchGroup } from '../services/embeddingService.js';
 import {
@@ -22,7 +22,6 @@ import {
   initSessionWithGlobalDocs,
   isSessionSeeded
 } from '../services/sessionService.js';
-import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
 import { clearMemory } from '../services/memoryService.js';
 
 const router = Router();
@@ -174,6 +173,7 @@ export async function handleUpload(req, res) {
         page_number: getPageNumber(chunk.charStart, pageMap),
         total_pages: totalPages,
         source_type: 'session_upload',
+        session_id: sessionId,
         upload_timestamp: new Date().toISOString(),
         char_start: chunk.charStart,
         char_end: chunk.charEnd,
@@ -199,7 +199,7 @@ export async function handleUpload(req, res) {
 
     console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
 
-    const { collection } = await getSessionCollection(sessionId);
+    const { collection } = await getCollection();
     let processedChunks = 0;
     const allEmbeddings = [];
 
@@ -283,7 +283,6 @@ export async function handleUpload(req, res) {
       }
     }
 
-    invalidateSessionCollectionCache(sessionId);
     addDocumentToSession(sessionId, {
       id: documentId, filename: cleanFilename, fileSize: file.size,
       pageCount: totalPages, chunkCount: allEmbeddings.length, status: 'ready'
@@ -401,7 +400,7 @@ export async function deleteDocument(req, res) {
   try {
     if (sessionId) {
       try {
-        const { collection } = await getSessionCollection(sessionId);
+        const { collection } = await getCollection();
         if (collection) {
           await deleteDocumentVectors(collection, documentId);
         }

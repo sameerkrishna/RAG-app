@@ -1,24 +1,9 @@
-import { getSessionCollection, hybridQueryCollection } from './chromaService.js';
+import { getCollection, hybridQueryCollection } from './chromaService.js';
 import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const TOP_K = parseInt(process.env.TOP_K) || 20;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
-
-const cachedSessionCollections = new Map();
-
-async function getOrCacheSessionCollection(sessionId) {
-  if (cachedSessionCollections.has(sessionId)) {
-    return cachedSessionCollections.get(sessionId);
-  }
-  try {
-    const { collection } = await getSessionCollection(sessionId);
-    if (collection) cachedSessionCollections.set(sessionId, collection);
-    return collection;
-  } catch {
-    return null;
-  }
-}
 
 function calculateCoverage(results, topK = 5) {
   if (!results || results.length === 0) return { confidence: 0, topScore: 0 };
@@ -35,17 +20,22 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
   const topK = options.topK || 5;
 
   try {
-    const [queryEmbedding, sessionCollection] = await Promise.all([
+    const [queryEmbedding, { collection }] = await Promise.all([
       embedQuery(query),
-      sessionId ? getOrCacheSessionCollection(sessionId) : Promise.resolve(null)
+      getCollection()
     ]);
 
-    if (!sessionCollection) {
-      console.warn(`⚠️  No session collection found for ${sessionId}`);
+    if (!collection) {
+      console.warn(`⚠️  No collection available`);
       return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding };
     }
 
-    const rawResults = await hybridQueryCollection(sessionCollection, query, queryEmbedding, topK);
+    // Build metadata filter: include both 'global' vectors and this session's vectors
+    const where = sessionId
+      ? { session_id: { "$in": ["global", sessionId] } }
+      : { session_id: "global" };
+
+    const rawResults = await hybridQueryCollection(collection, query, queryEmbedding, topK, where);
 
     const results = rawResults.map(r => ({
       ...r,
@@ -72,10 +62,6 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
   }
 }
 
-export function invalidateSessionCollectionCache(sessionId) {
-  cachedSessionCollections.delete(sessionId);
-}
-
 export function formatContextForPrompt(results, maxTokens = 7000) {
   if (!results || results.length === 0) return '';
 
@@ -87,7 +73,7 @@ export function formatContextForPrompt(results, maxTokens = 7000) {
     const tokenEstimate = result.text.length / 4;
     if (totalTokens + tokenEstimate > maxTokens) break;
     totalTokens += tokenEstimate;
-    const sourceLabel = result.source_type === 'global' ? '[Seed Document]' : '[Session Upload]';
+    const sourceLabel = result.source_type === 'session_upload' ? '[Session Upload]' : '[Seed Document]';
     const page = result.metadata.page_number ? ` (Page ${result.metadata.page_number})` : '';
     contextParts.push(`[${i + 1}] ${sourceLabel} ${result.metadata.filename || 'Unknown'}${page}:\n${result.text}`);
   }
