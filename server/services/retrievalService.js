@@ -1,148 +1,11 @@
-import { getSessionCollection, queryCollection } from './chromaService.js';
+import { getSessionCollection, hybridQueryCollection } from './chromaService.js';
 import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
-import { BM25 } from 'fast-bm25';
 
 const TOP_K = parseInt(process.env.TOP_K) || 20;
 const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
 
 const cachedSessionCollections = new Map();
-
-// ── Hybrid search state (BM25 index, chunk lookup, chunk count snapshot) ──
-const sessionBM25Indices = new Map();
-const sessionChunksMap = new Map();
-const sessionLastChunkCount = new Map();
-
-/**
- * Rebuilds BM25 index and chunk lookup for a session if needed.
- */
-async function rebuildSessionBM25Index(sessionId, sessionCollection) {
-  const allData = await sessionCollection.get({ include: ['documents', 'metadatas'] });
-
-  if (allData.ids && allData.ids.length > 0) {
-    sessionBM25Indices.set(sessionId, new BM25(allData.documents));
-
-    const lookUpCache = new Map();
-    allData.ids.forEach((id, idx) => {
-      lookUpCache.set(id, {
-        id,
-        text: allData.documents[idx],
-        metadata: allData.metadatas[idx]
-      });
-    });
-    sessionChunksMap.set(sessionId, lookUpCache);
-    sessionLastChunkCount.set(sessionId, allData.ids.length);
-    console.log(`♻️ JIT Matrix Rebuilt for session ${sessionId} with ${allData.ids.length} chunks.`);
-  }
-}
-
-/**
- * TWO-STAGE JIT RETRIEVAL ENGINE (BM25 + vector → RRF fusion → Cohere rerank)
- */
-async function dynamicSessionSearchPipeline(sessionId, sessionCollection, queryText, queryEmbedding, finalTopK = 5) {
-  try {
-    // Just-in-time parity verification – rebuild BM25 if chunks changed
-    const currentChromaCount = await sessionCollection.count();
-    const cachedCount = sessionLastChunkCount.get(sessionId) || 0;
-
-    if (currentChromaCount !== cachedCount || !sessionBM25Indices.has(sessionId)) {
-      await rebuildSessionBM25Index(sessionId, sessionCollection);
-    }
-
-    const currentBM25 = sessionBM25Indices.get(sessionId);
-    const currentLookupCache = sessionChunksMap.get(sessionId);
-
-    if (!currentBM25 || !currentLookupCache) return [];
-
-    // Stage 1: Hybrid retrieval (vector + BM25) with Reciprocal Rank Fusion
-    const vectorResults = await queryCollection(sessionCollection, queryEmbedding, TOP_K);
-    const bm25Scores = currentBM25.search(queryText);
-
-    const allChunkIds = Array.from(currentLookupCache.keys());
-    const lexicalResults = bm25Scores
-      .map((score, index) => ({ id: allChunkIds[index], score }))
-      .filter(item => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, TOP_K);
-
-    // RRF merge
-    const rrfScores = {};
-    const k_constant = 60;
-
-    vectorResults.forEach((item, index) => {
-      rrfScores[item.id] = (rrfScores[item.id] || 0) + (1 / (k_constant + (index + 1)));
-    });
-
-    lexicalResults.forEach((item, index) => {
-      rrfScores[item.id] = (rrfScores[item.id] || 0) + (1 / (k_constant + (index + 1)));
-    });
-
-    const candidateIds = Object.keys(rrfScores)
-      .sort((a, b) => rrfScores[b] - rrfScores[a])
-      .slice(0, TOP_K);
-
-    const candidateChunks = candidateIds
-      .map(id => currentLookupCache.get(id))
-      .filter(Boolean);   // remove any missing entries
-
-    if (candidateChunks.length === 0) return [];
-
-    // ── Stage 2: Rerank via OpenRouter ────────────────────────────────
-    const documentsForRerank = candidateChunks.map(chunk => chunk.text);
-
-    // Helper: build a safe result object with guaranteed numeric score
-    const safeResult = (chunk, score) => ({
-      id: chunk.id,
-      text: chunk.text,
-      metadata: chunk.metadata,
-      score: typeof score === 'number' ? score : 0.5,
-      source_type: chunk.metadata?.source_type || 'session',
-    });
-
-    try {
-  const response = await fetch('https://openrouter.ai/api/v1/rerank', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'cohere/rerank-v3.5',  // ✅ corrected
-      query: queryText,
-      documents: documentsForRerank,
-      top_n: finalTopK,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('OpenRouter rerank HTTP error:', response.status, errorText);
-    throw new Error(`OpenRouter rerank failed: ${response.status} ${errorText}`);
-  }
-
-  const rerankData = await response.json();
-  //console.log('OpenRouter rerank raw response:', JSON.stringify(rerankData)); // first 200 chars
-
-  if (!rerankData.results || rerankData.results.length === 0) {
-    console.warn('⚠️ Rerank returned empty; falling back to RRF candidates.');
-    return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
-  }
-
-  return rerankData.results.map(result => {
-    const initialCandidate = candidateChunks[result.index];
-    const score = result.relevance_score ?? result.score ?? 0.5;
-    return safeResult(initialCandidate, score);
-  });
-} catch (rerankError) {
-  console.error('OpenRouter rerank error:', rerankError);
-  // fallback
-  return candidateChunks.slice(0, finalTopK).map(chunk => safeResult(chunk, 0.5));
-}
-  } catch (error) {
-    console.error(`❌ Search failure on session ${sessionId}:`, error);
-    throw error;
-  }
-}
 
 async function getOrCacheSessionCollection(sessionId) {
   if (cachedSessionCollections.has(sessionId)) {
@@ -167,7 +30,7 @@ function calculateCoverage(results, topK = 5) {
   };
 }
 
-// ── Main retrieval function (modified) ─────────────────────────────────
+// ── Main retrieval function (Hybrid: dense + BM25 via Chroma RRF) ──────
 export async function retrieveForQuery(query, sessionId, options = {}) {
   const topK = options.topK || 5;
 
@@ -182,10 +45,7 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
       return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding };
     }
 
-    // 🚀 Replace the old simple vector search with the hybrid pipeline
-    const rawResults = await dynamicSessionSearchPipeline(
-      sessionId, sessionCollection, query, queryEmbedding, topK
-    );
+    const rawResults = await hybridQueryCollection(sessionCollection, query, queryEmbedding, topK);
 
     const results = rawResults.map(r => ({
       ...r,
