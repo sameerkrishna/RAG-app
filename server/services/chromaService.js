@@ -196,24 +196,37 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
       .select("#document","#metadata", "#score")
       .limit(topK);
 
-    const results = await collection.search(search);
+    const raw = await collection.search(search);
 
-    console.log('=== HYBRID SEARCH RAW RESPONSE ===');
-    console.log(JSON.stringify(results, null, 2));
-    console.log('=== END RAW RESPONSE ===');
-    
-    if (!results || !results.ids || results.ids.length === 0) {
+    // Parallel‑array structure: ids[0], documents[0], metadatas[0], scores[0]
+    if (!raw.ids || !raw.ids[0] || raw.ids[0].length === 0) {
       return [];
     }
 
-    // Map results to the same shape as queryCollection()
-     return results.ids.map((id, idx) => ({
-       id,
-       text: results.documents?.[idx] ?? '',
-       metadata: results.metadatas?.[idx] ?? {},
-       distance: 1- (results.scores?.[idx] ?? 0),
-       score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
-    }));
+  const ids = raw.ids[0];
+    const docs = raw.documents?.[0] ?? [];
+    const metas = raw.metadatas?.[0] ?? [];
+    const scores = raw.scores?.[0] ?? [];
+
+     // RRF scores from Chroma are typically negative (e.g., -0.0165).
+    // Convert them to a positive relevance score that behaves like your old 1‑distance.
+    const maxAbsScore = Math.max(...scores.map(s => Math.abs(s)), 1e-6);
+
+    return ids.map((id, idx) => {
+      const rawScore = scores[idx] ?? -0.5;
+      // Normalise to [0,1] – higher is better (negate and divide by max abs)
+      const normalizedScore = Math.abs(rawScore) / maxAbsScore; // now 0–1
+      // Optionally boost a bit to match your old score range (0.5‑ish)
+      const finalScore = Math.round(normalizedScore * 100) / 100;
+
+      return {
+        id,
+        text: docs[idx] ?? '',
+        metadata: metas[idx] ?? {},
+        distance: 1-finalScore,                       // not provided by hybrid search
+        score: finalScore                  // guaranteed numeric
+      };
+    });
     
   } catch (error) {
     console.error('Hybrid query failed, falling back to dense-only:', error.message);
