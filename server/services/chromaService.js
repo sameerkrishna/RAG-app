@@ -201,21 +201,14 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
     }
 
     // Map results to the same shape as queryCollection()
-    // return results.ids.map((id, idx) => ({
-    //   id,
-    //   text: results.documents?.[idx] ?? '',
-    //   metadata: results.metadatas?.[idx] ?? {},
-    //   distance: results.distances?.[idx] ?? 0,
-    //   score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
-    // }));
-    return results.results.map((item) => ({
-      id: item.id,
-      text: item.document,
-      metadata: item.metadata || {},
-      score: item.score,
-      // distance not provided; keep for backward compat if needed, default to 0
-      distance: 0
+    return results.ids.map((id, idx) => ({
+       id,
+       text: results.documents?.[idx] ?? '',
+       metadata: results.metadatas?.[idx] ?? {},
+       distance: results.distances?.[idx] ?? 0,
+       score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
     }));
+    
   } catch (error) {
     console.error('Hybrid query failed, falling back to dense-only:', error.message);
     // Graceful fallback to dense-only search for backward compatibility
