@@ -196,17 +196,21 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
 
     const results = await collection.search(search);
 
+    console.log('=== HYBRID SEARCH RAW RESPONSE ===');
+    console.log(JSON.stringify(results, null, 2));
+    console.log('=== END RAW RESPONSE ===');
+    
     if (!results || !results.ids || results.ids.length === 0) {
       return [];
     }
 
     // Map results to the same shape as queryCollection()
-    return results.ids[0].map((id, idx) => ({
-      id,
-      text: results.documents[0][idx],
-      metadata: results.metadatas[0][idx],
-      distance: results.distances[0][idx],
-      score: 1 - results.distances[0][idx]
+     return results.ids.map((id, idx) => ({
+       id,
+       text: results.documents?.[idx] ?? '',
+       metadata: results.metadatas?.[idx] ?? {},
+       distance: results.distances?.[idx] ?? 0,
+       score: results.scores?.[idx] ?? (1 - (results.distances?.[idx] ?? 0))
     }));
     
   } catch (error) {
