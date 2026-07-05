@@ -193,7 +193,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
         weights: [0.7, 0.3],
         k: 60
       }))
-      ..select("#document","#metadata", "#score");
+      .select("#document","#metadata", "#score");
       .limit(topK);
 
     const results = await collection.search(search);
