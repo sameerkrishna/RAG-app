@@ -184,7 +184,7 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
 export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5) {
   try {
     const search = new Search()
-      .rank(new Rrf({
+      .rank(Rrf({
         ranks: [
           Knn({ query: queryEmbedding, returnRank: true, limit: 100 }),
           Knn({ query: queryText, key: 'sparse_bm25', returnRank: true, limit: 100 })
