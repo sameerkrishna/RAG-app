@@ -97,7 +97,7 @@ async function getIndexedFilenames(collection) {
 async function buildSeedDatabase() {
   console.log('=== Building Seed Database ===\n');
   console.log(`Seed directory:  ${SEED_DIR}`);
-  console.log(`Collection:      ${process.env.CHROMA_GLOBAL_COLLECTION || 'dev'}`);
+  console.log(`Collection:      ${process.env.CHROMA_GLOBAL_COLLECTION || 'seed_db'}`);
   console.log(`Embedding model: ${process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001'}`);
   console.log(`Dimensions:      ${process.env.GEMINI_EMBEDDING_DIMENSIONS || 3072}`);
 
