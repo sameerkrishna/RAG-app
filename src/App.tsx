@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useState } from 'react';
 import Assistant from './pages/Assistant';
 import KnowledgeBase from './pages/KnowledgeBase';
-import { SeedingProvider } from './context/SeedingContext';
+import { AppProvider } from './context/AppContext';
 
 const STORAGE_KEY = 'rag_session_id';
 
@@ -16,7 +16,7 @@ function App() {
   });
 
   return (
-    <SeedingProvider>
+    <AppProvider sessionId={sessionId}>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Assistant sessionId={sessionId} />} />
@@ -24,7 +24,7 @@ function App() {
           <Route path="/knowledge" element={<KnowledgeBase sessionId={sessionId} />} />
         </Routes>
       </BrowserRouter>
-    </SeedingProvider>
+    </AppProvider>
   );
 }
 
