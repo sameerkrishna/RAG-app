@@ -52,14 +52,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
     }
   }, []);
 
-  useEffect(() => {
-    if (activeConvId) {
-      const conv = getAllConversations().find(c => c.id === activeConvId);
-      if (conv) loadConversation(conv);
-    } else {
-      clearMessages();
-    }
-  }, []);
+
 
   useEffect(() => {
     if (activeConvId) sessionStorage.setItem(ACTIVE_CONV_KEY, activeConvId);
