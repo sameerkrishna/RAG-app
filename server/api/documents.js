@@ -283,7 +283,6 @@ export async function handleUpload(req, res) {
       }
     }
 
-    invalidateSessionCollectionCache(sessionId);
     addDocumentToSession(sessionId, {
       id: documentId, filename: cleanFilename, fileSize: file.size,
       pageCount: totalPages, chunkCount: allEmbeddings.length, status: 'ready'
