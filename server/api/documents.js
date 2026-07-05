@@ -22,7 +22,6 @@ import {
   initSessionWithGlobalDocs,
   isSessionSeeded
 } from '../services/sessionService.js';
-import { invalidateSessionCollectionCache } from '../services/retrievalService.js';
 import { clearMemory } from '../services/memoryService.js';
 
 const router = Router();
