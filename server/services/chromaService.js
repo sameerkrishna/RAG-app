@@ -186,6 +186,7 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
  * Returns results in the same shape as queryCollection() for backward compatibility.
  */
 export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5) {
+  return queryCollection(collection, queryEmbedding, topK);
   try {
     const search = new Search()
       .rank(Rrf({
