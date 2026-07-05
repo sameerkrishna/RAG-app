@@ -224,14 +224,14 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
     // Boundary protection
     normalizedScore = Math.max(0, Math.min(1, normalizedScore));
 
-    const finalScore = Math.round(normalizedScore * 100) / 100;
+    //const finalScore = Math.round(normalizedScore * 100) / 100;
 
     return {
       id,
       text: docs[idx] ?? '',
       metadata: metas[idx] ?? {},
-      distance: 1 - finalScore, 
-      score: finalScore                  
+      distance: 1 - normalizedScore, 
+      score: normalizedScore                  
     };
   });
 
