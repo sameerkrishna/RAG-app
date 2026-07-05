@@ -160,10 +160,7 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
       include: ['documents', 'metadatas', 'distances']
     });
     
-    console.log('=== SEARCH RAW RESPONSE ===');
-    console.log(JSON.stringify(results, null, 2));
-    console.log('===  RAW RESPONSE ===');
-    
+  
     if (!results.ids || results.ids.length === 0 || results.ids[0].length === 0) {
       return [];
     }
@@ -186,7 +183,6 @@ export async function queryCollection(collection, queryEmbedding, topK = 5) {
  * Returns results in the same shape as queryCollection() for backward compatibility.
  */
 export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5) {
-  return queryCollection(collection, queryEmbedding, topK);
   try {
     const search = new Search()
       .rank(Rrf({
@@ -197,6 +193,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
         weights: [0.7, 0.3],
         k: 60
       }))
+      ..select("#document","#metadata", "#score");
       .limit(topK);
 
     const results = await collection.search(search);
