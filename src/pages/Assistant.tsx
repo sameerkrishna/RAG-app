@@ -31,7 +31,7 @@ function getGreeting(): string {
 
 export default function Assistant({ sessionId }: AssistantProps) {
   const navigate = useNavigate();
-  const { messages, isLoading, isThinking, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat();
+  const { messages, isLoading, isThinking, activeConvId, sendMessage, sendFeedback, cancel, clearMessages, loadConversation } = useChat();
   const { isSeeding, setIsSeeding } = useSeeding();
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
@@ -328,6 +328,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
                       message={msg}
                       onShowSources={() => msg.sources && handleShowSources(msg.sources, msg.citations || [])}
                       onRetry={() => getLastUserQuery() && sendMessage(getLastUserQuery())}
+                      onFeedback={(messageId, feedbackType) => sendFeedback(messageId, feedbackType)}
                     />
                   ))}
 

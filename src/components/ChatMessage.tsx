@@ -9,11 +9,12 @@ interface ChatMessageProps {
   message: ChatMessageType;
   onShowSources: () => void;
   onRetry: () => void;
+  onFeedback?: (messageId: string, type: 'like' | 'dislike') => void;
 }
 
-export default function ChatMessage({ message, onShowSources, onRetry }: ChatMessageProps) {
+export default function ChatMessage({ message, onShowSources, onRetry, onFeedback }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
-  const [feedbackSent, setFeedbackSent] = useState<'positive' | 'negative' | null>(null);
+  const [feedbackSent, setFeedbackSent] = useState<'like' | 'dislike' | null>(null);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -21,9 +22,12 @@ export default function ChatMessage({ message, onShowSources, onRetry }: ChatMes
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleFeedback = async (type: 'positive' | 'negative') => {
+  const handleFeedback = async (type: 'like' | 'dislike') => {
     if (feedbackSent) return;
     setFeedbackSent(type);
+    if (onFeedback) {
+      onFeedback(message.id, type);
+    }
   };
 
   const isUser = message.role === 'user';
@@ -115,29 +119,29 @@ export default function ChatMessage({ message, onShowSources, onRetry }: ChatMes
                   variant="ghost"
                   size="icon"
                   disabled={feedbackSent !== null}
-                  onClick={() => handleFeedback('positive')}
+                  onClick={() => handleFeedback('like')}
                   className={cn(
                     'h-8 w-8 transition-colors',
-                    feedbackSent === 'positive'
+                    feedbackSent === 'like'
                       ? 'text-green-500 bg-green-500/10 hover:bg-green-500/10 hover:text-green-500'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  <ThumbsUp className={cn('h-3.5 w-3.5', feedbackSent === 'positive' && 'fill-green-500')} />
+                  <ThumbsUp className={cn('h-3.5 w-3.5', feedbackSent === 'like' && 'fill-green-500')} />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
                   disabled={feedbackSent !== null}
-                  onClick={() => handleFeedback('negative')}
+                  onClick={() => handleFeedback('dislike')}
                   className={cn(
                     'h-8 w-8 transition-colors',
-                    feedbackSent === 'negative'
+                    feedbackSent === 'dislike'
                       ? 'text-red-500 bg-red-500/10 hover:bg-red-500/10 hover:text-red-500'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  <ThumbsDown className={cn('h-3.5 w-3.5', feedbackSent === 'negative' && 'fill-red-500')} />
+                  <ThumbsDown className={cn('h-3.5 w-3.5', feedbackSent === 'dislike' && 'fill-red-500')} />
                 </Button>
               </div>
             )}

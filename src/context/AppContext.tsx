@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types';
+import { supabase } from '../lib/supabase';
 
 // ── localStorage helpers ───────────────────────────────────────────────────
 const STORAGE_KEY = 'rag_conversations';
@@ -85,6 +86,7 @@ interface ChatContextValue {
   error: string | null;
   activeConvId: string | null;
   sendMessage: (query: string, waitFor?: Promise<any>) => void;
+  sendFeedback: (answerKey: string, feedback: 'like' | 'dislike') => void;
   cancel: () => void;
   clearMessages: () => void;
   loadConversation: (conv: StoredConversation) => void;
@@ -239,16 +241,34 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                 coverage = payload.coverage;
                 sources = payload.sources || [];
                 const isRefusal = payload.action === 'refusal';
+                const finalResponse = payload.response || accumulatedText;
 
                 setMessages(prev => {
                   const next = prev.map(m =>
                     m.id === assistantMessageId
-                      ? { ...m, content: payload.response || accumulatedText, citations, coverage, sources, isRefusal, isStreaming: false }
+                      ? { ...m, content: finalResponse, citations, coverage, sources, isRefusal, isStreaming: false }
                       : m
                   );
                   persist(next, convId);
                   return next;
                 });
+
+                // Push to Supabase
+                const chunksList = sources.map((s: SearchResult, i: number) => ({
+                  [`chunk${i + 1}`]: s.text
+                }));
+                const conversationJson = {
+                  session_id: sessionId,
+                  query: query,
+                  chunks: chunksList,
+                  llm_response: finalResponse
+                };
+
+                supabase.from('Conversation_History').insert({
+                  answer_key: assistantMessageId,
+                  feedback: 'none',
+                  conversation: conversationJson
+                }).catch(err => console.error('Error inserting conversation history', err));
 
               } else if (currentEventName === 'error') {
                 setIsThinking(false);
@@ -297,6 +317,21 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
     }
   }, [sessionId, persist]);
 
+  const sendFeedback = useCallback(async (answerKey: string, feedback: 'like' | 'dislike') => {
+    try {
+      const { error } = await supabase
+        .from('Conversation_History')
+        .update({ feedback })
+        .eq('answer_key', answerKey);
+      
+      if (error) {
+        console.error('Supabase update error:', error);
+      }
+    } catch (err) {
+      console.error('Error updating feedback:', err);
+    }
+  }, []);
+
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
     setIsThinking(false);
@@ -344,6 +379,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
     error,
     activeConvId,
     sendMessage,
+    sendFeedback,
     cancel,
     clearMessages,
     loadConversation
