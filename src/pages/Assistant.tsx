@@ -1,14 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useChat, getAllConversations, deleteConversation, markNavigationToKB, resetNavigationFlag } from '../hooks/useChat';
-import type { StoredConversation } from '../hooks/useChat';
+import { useChat, getAllConversations, deleteConversation, markNavigationToKB, resetNavigationFlag, StoredConversation, useSeeding } from '../context/AppContext';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
 import { Send, BookOpen, X, Bot, MessageSquarePlus, ChevronLeft, ChevronRight, Settings, Trash2, Info } from 'lucide-react';
 import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
-import { useSeeding } from '../context/SeedingContext';
 
 const ACTIVE_CONV_KEY = 'rag_active_conv_id';
 
@@ -33,7 +31,7 @@ function getGreeting(): string {
 
 export default function Assistant({ sessionId }: AssistantProps) {
   const navigate = useNavigate();
-  const { messages, isLoading, isThinking, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat(sessionId);
+  const { messages, isLoading, isThinking, activeConvId, sendMessage, cancel, clearMessages, loadConversation } = useChat();
   const { isSeeding, setIsSeeding } = useSeeding();
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
