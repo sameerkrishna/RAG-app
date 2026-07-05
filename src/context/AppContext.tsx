@@ -264,11 +264,17 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                   llm_response: finalResponse
                 };
 
-                supabase.from('Conversation_History').insert({
-                  answer_key: assistantMessageId,
-                  feedback: 'none',
-                  conversation: conversationJson
-                }).catch(err => console.error('Error inserting conversation history', err));
+                const insertConversation = async () => {
+                  const { error: dbError } = await supabase.from('Conversation_History').insert({
+                    answer_key: assistantMessageId,
+                    feedback: 'none',
+                    conversation: conversationJson
+                  });
+                  if (dbError) {
+                    console.error('Error inserting conversation history', dbError);
+                  }
+                };
+                insertConversation();
 
               } else if (currentEventName === 'error') {
                 setIsThinking(false);
