@@ -146,7 +146,7 @@ export async function hybridQueryCollection(collection, queryText, queryEmbeddin
           Knn({ query: queryEmbedding, returnRank: true, limit: 100 }),
           Knn({ query: queryText, key: 'sparse_bm25', returnRank: true, limit: 100 })
         ],
-        weights: [0.8, 0.2],
+        weights: [0.9, 0.1],
         k: 60
       }))
       .where(where)
