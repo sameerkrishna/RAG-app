@@ -82,13 +82,20 @@ const MAX_RETRY_ATTEMPTS = 5;
 // 3. AI CLIENT (single, reusable instance)
 // ============================================================
 function loadGoogleCredentials() {
-  // 1. Try env var first (for serverless where secrets work)
+  // 1. Try env var first (supports raw JSON or base64-encoded JSON)
   const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
   if (credentialsJson) {
     try {
+      // Try raw JSON first
       return JSON.parse(credentialsJson);
     } catch (e) {
-      console.warn('[embedding] Failed to parse GOOGLE_CREDENTIALS_JSON');
+      try {
+        // Try base64 decode (useful for platforms with character limit issues)
+        const decoded = Buffer.from(credentialsJson, 'base64').toString('utf-8');
+        return JSON.parse(decoded);
+      } catch (e2) {
+        console.warn('[embedding] Failed to parse GOOGLE_CREDENTIALS_JSON (tried raw and base64)');
+      }
     }
   }
 
