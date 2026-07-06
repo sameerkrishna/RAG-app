@@ -4,6 +4,7 @@ import { retrieveForQuery, generateCitations, formatContextForPrompt } from '../
 import { streamResponse } from '../services/geminiService.js';
 import { addTurnWithCitations, getRecentTurns } from '../services/memoryService.js';
 import { getOrCreateSession, getDeletedDocumentIds } from '../services/sessionService.js';
+import { insertConversationAsync } from '../services/supabaseService.js';
 
 const router = Router();
 
@@ -197,6 +198,24 @@ CURRENT QUESTION: ${query}`;
           });
 
     addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
+
+    const chunksList = finalSources.map((s, i) => ({
+      [`chunk${i + 1}`]: s.excerpt || s.text || ''
+    }));
+
+    const conversationJson = {
+      session_id: sessionId,
+      query: query,
+      chunks: chunksList,
+      llm_response: rewrittenResponse
+    };
+
+    // Kick off DB insertion asynchronously (chained per session)
+    insertConversationAsync(sessionId, {
+      answer_key: answerId,
+      feedback: 'none',
+      conversation: conversationJson
+    });
 
     sendEvent('complete', {
       answerId,

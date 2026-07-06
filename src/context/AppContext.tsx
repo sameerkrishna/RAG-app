@@ -35,7 +35,7 @@ export function loadAllConversations(): StoredConversation[] {
 export function saveAllConversations(convs: StoredConversation[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(convs));
-  } catch {}
+  } catch { }
 }
 
 export function getAllConversations(): StoredConversation[] {
@@ -59,7 +59,7 @@ function getInitialConversationState(): { messages: ChatMessage[]; activeConvId:
       const conv = loadAllConversations().find(c => c.id === savedConvId);
       if (conv) return { messages: conv.messages, activeConvId: conv.id };
     }
-  } catch {}
+  } catch { }
   return { messages: [], activeConvId: null };
 }
 
@@ -71,7 +71,7 @@ interface SeedingContextValue {
 
 const SeedingContext = createContext<SeedingContextValue>({
   isSeeding: false,
-  setIsSeeding: () => {}
+  setIsSeeding: () => { }
 });
 
 export function useSeeding() {
@@ -253,23 +253,6 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                   return next;
                 });
 
-                // Push to Supabase
-                const chunksList = sources.map((s: SearchResult, i: number) => ({
-                  [`chunk${i + 1}`]: s.text
-                }));
-                const conversationJson = {
-                  session_id: sessionId,
-                  query: query,
-                  chunks: chunksList,
-                  llm_response: finalResponse
-                };
-
-                supabase.from('Conversation_History').insert({
-                  answer_key: assistantMessageId,
-                  feedback: 'none',
-                  conversation: conversationJson
-                }).catch(err => console.error('Error inserting conversation history', err));
-
               } else if (currentEventName === 'error') {
                 setIsThinking(false);
                 setError(payload.message);
@@ -287,7 +270,9 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
               }
 
               currentEventName = '';
-            } catch (e) { /* ignore parse errors */ }
+            } catch (e) {
+              console.error('Error processing SSE data:', e, data);
+            }
           }
         }
       }
@@ -323,7 +308,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
         .from('Conversation_History')
         .update({ feedback })
         .eq('answer_key', answerKey);
-      
+
       if (error) {
         console.error('Supabase update error:', error);
       }

@@ -90,7 +90,7 @@ export function generateCitations(results) {
     filename: result.metadata.filename,
     pageNumber: result.metadata.page_number,
     section: result.metadata.section_title,
-    excerpt: result.text.slice(0, 200) + (result.text.length > 200 ? '...' : ''),
+    excerpt: result.text,
     score: result.score,
     sourceType: result.source_type,
     chunkId: result.id
