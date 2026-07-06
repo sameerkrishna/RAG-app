@@ -184,7 +184,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
           'Content-Type': 'application/json',
           'x-session-id': sessionId
         },
-        body: JSON.stringify({ query, sessionId, convId }),
+        body: JSON.stringify({ query, sessionId, convId, messageId: assistantMessageId }),
         signal: abortControllerRef.current.signal
       });
 
@@ -307,13 +307,13 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
 
   const sendFeedback = useCallback(async (answerKey: string, feedback: 'like' | 'dislike') => {
     try {
-      const { error } = await supabase
-        .from('Conversation_History')
-        .update({ feedback })
-        .eq('answer_key', answerKey);
-
-      if (error) {
-        console.error('Supabase update error:', error);
+      const response = await fetch('/api/chat/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answerId: answerKey, feedback })
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
     } catch (err) {
       console.error('Error updating feedback:', err);
