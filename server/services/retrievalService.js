@@ -20,14 +20,18 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
   const topK = options.topK || 5;
 
   try {
+    // ── Timing: embedding ──────────────────────────────────────────
+    const tEmbedStart = performance.now();
+    let tEmbedEnd;
     const [queryEmbedding, { collection }] = await Promise.all([
-      embedQuery(query),
+      embedQuery(query).then(result => { tEmbedEnd = performance.now(); return result; }),
       getCollection()
     ]);
+    const embeddingMs = tEmbedEnd - tEmbedStart;
 
     if (!collection) {
       console.warn(`⚠️  No collection available`);
-      return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding };
+      return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding, timings: { embeddingMs, retrievalMs: 0 } };
     }
 
     // Build metadata filter: include both 'global' vectors and this session's vectors
@@ -35,7 +39,10 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
       ? { session_id: { "$in": ["global", sessionId] } }
       : { session_id: "global" };
 
+    // ── Timing: retrieval (Chroma search) ──────────────────────────
+    const tRetrievalStart = performance.now();
     const rawResults = await hybridQueryCollection(collection, query, queryEmbedding, topK, where);
+    const retrievalMs = performance.now() - tRetrievalStart;
 
     const results = rawResults.map(r => ({
       ...r,
@@ -53,7 +60,8 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
     return {
       results,
       coverage: { ...coverage, level, score: topScore },
-      queryEmbedding
+      queryEmbedding,
+      timings: { embeddingMs, retrievalMs }
     };
 
   } catch (error) {
