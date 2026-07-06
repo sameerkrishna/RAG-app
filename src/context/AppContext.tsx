@@ -219,6 +219,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
             const data = line.slice(6);
             try {
               const payload = JSON.parse(data);
+              console.log("Parsed event:", currentEventName, payload);
 
               if (currentEventName === 'token' && payload.text) {
                 setIsThinking(false);
