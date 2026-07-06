@@ -25,7 +25,6 @@ export function addTurn(sessionId, role, content, metadata = {}) {
 
   memory.turns.push(turn);
 
-  // Keep only the last N turns
   if (memory.turns.length > maxTurns) {
     memory.turns = memory.turns.slice(-maxTurns);
   }
@@ -40,7 +39,6 @@ export function getMemory(sessionId) {
 export function getRecentTurns(sessionId, maxTurns = null) {
   const memory = getMemory(sessionId);
   const limit = maxTurns || parseInt(process.env.MEMORY_WINDOW_TURNS) || DEFAULT_MEMORY_WINDOW;
-
   return memory.turns.slice(-limit);
 }
 
@@ -54,16 +52,12 @@ export function getConversationContext(sessionId) {
 
 export function formatMemoryForPrompt(sessionId) {
   const turns = getRecentTurns(sessionId);
-  if (turns.length === 0) {
-    return '';
-  }
+  if (turns.length === 0) return '';
 
-  const formatted = turns.map(t => {
+  return turns.map(t => {
     const prefix = t.role === 'user' ? 'User:' : 'Assistant:';
     return `${prefix} ${t.content}`;
   }).join('\n\n');
-
-  return formatted;
 }
 
 export function clearMemory(sessionId) {
@@ -79,8 +73,9 @@ export function getMemoryStats(sessionId) {
   };
 }
 
-export function addTurnWithCitations(sessionId, role, content, citations = [], coverage = null) {
+export function addTurnWithCitations(sessionId, role, content, citations = [], coverage = null, answerId = null) {
   return addTurn(sessionId, role, content, {
+    ...(answerId && { id: answerId }),
     citations,
     coverage,
     hasCitations: citations.length > 0
@@ -90,9 +85,7 @@ export function addTurnWithCitations(sessionId, role, content, citations = [], c
 export function getLastUserMessage(sessionId) {
   const memory = getMemory(sessionId);
   for (let i = memory.turns.length - 1; i >= 0; i--) {
-    if (memory.turns[i].role === 'user') {
-      return memory.turns[i];
-    }
+    if (memory.turns[i].role === 'user') return memory.turns[i];
   }
   return null;
 }
@@ -100,9 +93,7 @@ export function getLastUserMessage(sessionId) {
 export function getLastAssistantMessage(sessionId) {
   const memory = getMemory(sessionId);
   for (let i = memory.turns.length - 1; i >= 0; i--) {
-    if (memory.turns[i].role === 'assistant') {
-      return memory.turns[i];
-    }
+    if (memory.turns[i].role === 'assistant') return memory.turns[i];
   }
   return null;
 }

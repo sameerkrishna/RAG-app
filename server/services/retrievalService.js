@@ -1,115 +1,69 @@
-import { getGlobalCollection, getSessionCollection, queryCollection } from './chromaService.js';
+import { getCollection, hybridQueryCollection } from './chromaService.js';
 import { embedQuery } from './embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
 
-const TOP_K = parseInt(process.env.TOP_K) || 5;
-const COVERAGE_HIGH_THRESHOLD = parseFloat(process.env.COVERAGE_HIGH_THRESHOLD) || 0.75;
-const COVERAGE_MEDIUM_THRESHOLD = parseFloat(process.env.COVERAGE_MEDIUM_THRESHOLD) || 0.55;
+const TOP_K = parseInt(process.env.TOP_K) || 20;
+const REFUSAL_THRESHOLD = parseFloat(process.env.REFUSAL_THRESHOLD) || 0.05;
 
-function computeSimilarityScore(distance) {
-  // Convert distance to similarity (assuming cosine distance)
-  return 1 - distance;
-}
-
-function calculateCoverage(results, topK = TOP_K) {
-  if (!results || results.length === 0) {
-    return { level: 'low', score: 0, reason: 'No results found' };
-  }
-
-  const topResults = results.slice(0, topK);
-  const scores = topResults.map(r => r.score);
+function calculateCoverage(results, topK = 5) {
+  if (!results || results.length === 0) return { confidence: 0, topScore: 0 };
+  const scores = results.slice(0, topK).map(r => Math.max(0, r.score));
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-  let level;
-  let reason;
-
-  if (avgScore >= COVERAGE_HIGH_THRESHOLD) {
-    level = 'high';
-    reason = 'High confidence in retrieved context';
-  } else if (avgScore >= COVERAGE_MEDIUM_THRESHOLD) {
-    level = 'medium';
-    reason = 'Moderate confidence in retrieved context';
-  } else {
-    level = 'low';
-    reason = 'Insufficient relevant information found';
-  }
-
   return {
-    level,
-    score: avgScore,
-    topScore: Math.max(...scores),
-    bottomScore: Math.min(...scores),
-    reason
+    confidence: Math.round(avgScore * 100),
+    topScore: Math.max(...scores)
   };
 }
 
+// ── Main retrieval function (Hybrid: dense + BM25 via Chroma RRF) ──────
 export async function retrieveForQuery(query, sessionId, options = {}) {
-  const topK = options.topK || TOP_K;
-  const includeGlobal = options.includeGlobal !== false;
+  const topK = options.topK || 5;
 
   try {
-    // Embed the query
-    const queryEmbedding = await embedQuery(query);
+    // ── Timing: embedding ──────────────────────────────────────────
+    const tEmbedStart = performance.now();
+    let tEmbedEnd;
+    const [queryEmbedding, { collection }] = await Promise.all([
+      embedQuery(query).then(result => { tEmbedEnd = performance.now(); return result; }),
+      getCollection()
+    ]);
+    const embeddingMs = tEmbedEnd - tEmbedStart;
 
-    // Query both collections in parallel
-    const queries = [];
-
-    // Global collection
-    if (includeGlobal) {
-      const globalCollection = await getGlobalCollection();
-      queries.push({
-        type: 'global',
-        promise: queryCollection(globalCollection, queryEmbedding, topK)
-      });
+    if (!collection) {
+      console.warn(`⚠️  No collection available`);
+      return { results: [], coverage: { confidence: 0, topScore: 0, level: 'low', score: 0 }, queryEmbedding, timings: { embeddingMs, retrievalMs: 0 } };
     }
 
-    // Session collection
-    if (sessionId) {
-      try {
-        const sessionCollection = await getSessionCollection(sessionId);
-        if (sessionCollection) {
-          queries.push({
-            type: 'session',
-            promise: queryCollection(sessionCollection, queryEmbedding, topK)
-          });
-        }
-      } catch (e) {
-        // Session collection doesn't exist yet, that's ok
-      }
-    }
+    // Build metadata filter: include both 'global' vectors and this session's vectors
+    const where = sessionId
+      ? { session_id: { "$in": ["global", sessionId] } }
+      : { session_id: "global" };
 
-    // Wait for all queries
-    const results = await Promise.all(queries.map(async q => ({
-      type: q.type,
-      results: await q.promise
-    })));
+    // ── Timing: retrieval (Chroma search) ──────────────────────────
+    const tRetrievalStart = performance.now();
+    const rawResults = await hybridQueryCollection(collection, query, queryEmbedding, topK, where);
+    const retrievalMs = performance.now() - tRetrievalStart;
 
-    // Merge and re-rank results
-    const allResults = [];
+    const results = rawResults.map(r => ({
+      ...r,
+      source_type: r.metadata?.source_type || 'session'
+    }));
 
-    for (const { type, results: typeResults } of results) {
-      for (const result of typeResults) {
-        allResults.push({
-          ...result,
-          source_type: type // 'global' or 'session'
-        });
-      }
-    }
+    const coverage = calculateCoverage(results, topK);
+    const topScore = coverage.topScore;
+    const level = topScore >= 0.6 ? 'high' : topScore >= 0.3 ? 'medium' : 'low';
 
-    // Sort by score descending
-    allResults.sort((a, b) => b.score - a.score);
-
-    // Take top K after merging
-    const topResults = allResults.slice(0, topK);
-
-    // Calculate coverage
-    const coverage = calculateCoverage(topResults, topK);
+    console.log('🔍 Query:', query);
+    console.log('📊 Coverage:', { ...coverage, level });
+    console.log('📈 Scores:', results.map(r => r.score.toFixed(4)));
 
     return {
-      results: topResults,
-      coverage,
-      queryEmbedding
+      results,
+      coverage: { ...coverage, level, score: topScore },
+      queryEmbedding,
+      timings: { embeddingMs, retrievalMs }
     };
+
   } catch (error) {
     console.error('Retrieval error:', error);
     throw error;
@@ -117,39 +71,26 @@ export async function retrieveForQuery(query, sessionId, options = {}) {
 }
 
 export function formatContextForPrompt(results, maxTokens = 7000) {
-  if (!results || results.length === 0) {
-    return '';
-  }
+  if (!results || results.length === 0) return '';
 
   let totalTokens = 0;
-  const maxTokensPerChar = 4;
   const contextParts = [];
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
-    const tokenEstimate = result.text.length / maxTokensPerChar;
-
-    if (totalTokens + tokenEstimate > maxTokens) {
-      break;
-    }
-
+    const tokenEstimate = result.text.length / 4;
+    if (totalTokens + tokenEstimate > maxTokens) break;
     totalTokens += tokenEstimate;
-
-    const sourceLabel = result.source_type === 'global' ? '[Seed Document]' : '[Session Upload]';
-    const citation = `[${i + 1}] ${sourceLabel} ${result.metadata.filename || 'Unknown'}`;
+    const sourceLabel = result.source_type === 'session_upload' ? '[Session Upload]' : '[Seed Document]';
     const page = result.metadata.page_number ? ` (Page ${result.metadata.page_number})` : '';
-
-    contextParts.push(`${citation}${page}:\n${result.text}`);
+    contextParts.push(`[${i + 1}] ${sourceLabel} ${result.metadata.filename || 'Unknown'}${page}:\n${result.text}`);
   }
 
   return contextParts.join('\n\n---\n\n');
 }
 
 export function generateCitations(results) {
-  if (!results || results.length === 0) {
-    return [];
-  }
-
+  if (!results || results.length === 0) return [];
   return results.map((result, idx) => ({
     id: uuidv4(),
     index: idx + 1,
@@ -157,7 +98,7 @@ export function generateCitations(results) {
     filename: result.metadata.filename,
     pageNumber: result.metadata.page_number,
     section: result.metadata.section_title,
-    excerpt: result.text.slice(0, 200) + (result.text.length > 200 ? '...' : ''),
+    excerpt: result.text,
     score: result.score,
     sourceType: result.source_type,
     chunkId: result.id
@@ -165,7 +106,7 @@ export function generateCitations(results) {
 }
 
 export function shouldShowRefusal(coverage) {
-  return coverage.level === 'low';
+  return coverage.topScore < REFUSAL_THRESHOLD;
 }
 
 export { calculateCoverage };

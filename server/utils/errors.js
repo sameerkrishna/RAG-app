@@ -75,12 +75,6 @@ export class RetrievalUnavailableError extends AppError {
   }
 }
 
-export class WebSearchUnavailableError extends AppError {
-  constructor() {
-    super('Web search is temporarily unavailable', 'WEB_SEARCH_UNAVAILABLE', 503);
-  }
-}
-
 export class CoverageTooLowError extends AppError {
   constructor() {
     super('Insufficient information in knowledge base', 'COVERAGE_TOO_LOW', 200);

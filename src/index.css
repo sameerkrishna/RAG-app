@@ -4,11 +4,11 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 40 33% 98%;
     --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
+    --card: 40 33% 99%;
     --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
+    --popover: 40 33% 99%;
     --popover-foreground: 222.2 84% 4.9%;
     --primary: 221.2 83% 53%;
     --primary-foreground: 210 40% 98%;
@@ -83,4 +83,15 @@
     content: '\25A0';
     @apply inline-block w-1 ml-0.5 animate-pulse;
   }
+}
+
+/* Indeterminate progress bar animation */
+@keyframes progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+  width: 40%;
 }

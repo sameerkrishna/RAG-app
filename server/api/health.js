@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { healthCheck as chromaHealthCheck } from '../services/chromaService.js';
-import { getRateLimitState } from '../services/embeddingService.js';
 
 const router = Router();
 
@@ -21,14 +20,6 @@ export async function health(req, res) {
       error: error.message
     };
   }
-
-  // Check Gemini (via API key presence)
-  healthStatus.services.gemini = {
-    status: process.env.GEMINI_API_KEY ? 'configured' : 'not_configured'
-  };
-
-  // Get rate limit state
-  healthStatus.rateLimit = getRateLimitState();
 
   // Overall status
   const hasErrors = Object.values(healthStatus.services).some(

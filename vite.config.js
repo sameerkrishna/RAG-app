@@ -38,6 +38,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
 function expressPlugin() {
     var app;
@@ -45,14 +46,30 @@ function expressPlugin() {
         name: 'express-plugin',
         configureServer: function (server) {
             return __awaiter(this, void 0, void 0, function () {
-                var expressApp;
+                var dotenv, expressApp;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, import('./server/app.js')];
+                        case 0: return [4 /*yield*/, import('dotenv')];
                         case 1:
+                            dotenv = _a.sent();
+                            dotenv.config();
+                            return [4 /*yield*/, import('./server/app.js')];
+                        case 2:
                             expressApp = (_a.sent()).default;
                             app = expressApp;
                             server.middlewares.use('/api', function (req, res, next) {
+                                var _a;
+                                // ✅ Patch SSE routes to flush immediately — prevents Vite buffering tokens
+                                if ((_a = req.url) === null || _a === void 0 ? void 0 : _a.startsWith('/chat')) {
+                                    res.setHeader('X-Accel-Buffering', 'no');
+                                    var originalWrite_1 = res.write.bind(res);
+                                    res.write = function (chunk) {
+                                        var result = originalWrite_1(chunk);
+                                        if (typeof res.flush === 'function')
+                                            res.flush();
+                                        return result;
+                                    };
+                                }
                                 app(req, res, next);
                             });
                             return [2 /*return*/];
@@ -62,8 +79,45 @@ function expressPlugin() {
         },
     };
 }
+function copyStaticAssets() {
+    return {
+        name: 'copy-static-assets',
+        closeBundle: function () {
+            // Copy seed_documents folder to dist
+            var seedSrc = path.resolve(__dirname, 'seed_documents');
+            var seedDest = path.resolve(__dirname, 'dist/seed_documents');
+            if (fs.existsSync(seedSrc)) {
+                fs.mkdirSync(seedDest, { recursive: true });
+                var files = fs.readdirSync(seedSrc);
+                files.forEach(function (file) {
+                    var srcFile = path.join(seedSrc, file);
+                    var destFile = path.join(seedDest, file);
+                    if (fs.statSync(srcFile).isFile()) {
+                        fs.copyFileSync(srcFile, destFile);
+                    }
+                });
+                console.log("\u2705 seed_documents copied to dist (".concat(files.length, " files)"));
+            }
+            // Copy google_credentials folder to dist
+            var credsSrc = path.resolve(__dirname, 'google_credentials');
+            var credsDest = path.resolve(__dirname, 'dist/google_credentials');
+            if (fs.existsSync(credsSrc)) {
+                fs.mkdirSync(credsDest, { recursive: true });
+                var files = fs.readdirSync(credsSrc);
+                files.forEach(function (file) {
+                    var srcFile = path.join(credsSrc, file);
+                    var destFile = path.join(credsDest, file);
+                    if (fs.statSync(srcFile).isFile()) {
+                        fs.copyFileSync(srcFile, destFile);
+                    }
+                });
+                console.log("\u2705 google_credentials copied to dist (".concat(files.length, " files)"));
+            }
+        }
+    };
+}
 export default defineConfig({
-    plugins: [react(), expressPlugin()],
+    plugins: [react(), expressPlugin(), copyStaticAssets()],
     resolve: {
         alias: {
             '@': path.resolve(__dirname, './src'),

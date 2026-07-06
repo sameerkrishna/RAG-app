@@ -1,5 +1,5 @@
 import ReactMarkdown from 'react-markdown';
-import { Copy, ThumbsUp, ThumbsDown, Search, FileText, AlertCircle, RefreshCw } from 'lucide-react';
+import { Copy, ThumbsUp, ThumbsDown, FileText, AlertCircle, RefreshCw } from 'lucide-react';
 import type { ChatMessage as ChatMessageType } from '../types';
 import { cn } from '../lib/utils';
 import { useState } from 'react';
@@ -8,13 +8,13 @@ import { Button } from './ui/Button';
 interface ChatMessageProps {
   message: ChatMessageType;
   onShowSources: () => void;
-  onWebSearch: () => void;
   onRetry: () => void;
+  onFeedback?: (messageId: string, type: 'like' | 'dislike') => void;
 }
 
-export default function ChatMessage({ message, onShowSources, onWebSearch, onRetry }: ChatMessageProps) {
+export default function ChatMessage({ message, onShowSources, onRetry, onFeedback }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
-  const [feedbackSent, setFeedbackSent] = useState<'positive' | 'negative' | null>(null);
+  const [feedbackSent, setFeedbackSent] = useState<'like' | 'dislike' | null>(null);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -22,8 +22,12 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleFeedback = async (type: 'positive' | 'negative') => {
+  const handleFeedback = async (type: 'like' | 'dislike') => {
+    if (feedbackSent) return;
     setFeedbackSent(type);
+    if (onFeedback) {
+      onFeedback(message.id, type);
+    }
   };
 
   const isUser = message.role === 'user';
@@ -78,14 +82,9 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
         )}
 
         {/* Coverage Badge */}
-        {!isUser && message.coverage && (
-          <span className={cn(
-            'coverage-badge mt-2',
-            message.coverage.level === 'high' && 'coverage-high',
-            message.coverage.level === 'medium' && 'coverage-medium',
-            message.coverage.level === 'low' && 'coverage-low'
-          )}>
-            {message.coverage.score.toFixed(0)}% confidence
+        {!isUser && message.coverage && message.coverage.confidence > 0 && message.citations && message.citations.length > 0 && (
+          <span className="mt-2 text-xs text-muted-foreground px-2 py-0.5 rounded-full bg-muted">
+           Relevance Match: {message.coverage.confidence}% 
           </span>
         )}
 
@@ -119,43 +118,44 @@ export default function ChatMessage({ message, onShowSources, onWebSearch, onRet
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => handleFeedback('positive')}
-                  className={cn('h-8 w-8 text-muted-foreground hover:text-foreground', feedbackSent === 'positive' && 'text-success')}
+                  disabled={feedbackSent !== null}
+                  onClick={() => handleFeedback('like')}
+                  className={cn(
+                    'h-8 w-8 transition-colors',
+                    feedbackSent === 'like'
+                      ? 'text-green-500 bg-green-500/10 hover:bg-green-500/10 hover:text-green-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
                 >
-                  <ThumbsUp className="h-3.5 w-3.5" />
+                  <ThumbsUp className={cn('h-3.5 w-3.5', feedbackSent === 'like' && 'fill-green-500')} />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => handleFeedback('negative')}
-                  className={cn('h-8 w-8 text-muted-foreground hover:text-foreground', feedbackSent === 'negative' && 'text-destructive')}
+                  disabled={feedbackSent !== null}
+                  onClick={() => handleFeedback('dislike')}
+                  className={cn(
+                    'h-8 w-8 transition-colors',
+                    feedbackSent === 'dislike'
+                      ? 'text-red-500 bg-red-500/10 hover:bg-red-500/10 hover:text-red-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
                 >
-                  <ThumbsDown className="h-3.5 w-3.5" />
+                  <ThumbsDown className={cn('h-3.5 w-3.5', feedbackSent === 'dislike' && 'fill-red-500')} />
                 </Button>
               </div>
             )}
 
             {message.isRefusal && (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onWebSearch}
-                  className="h-8 gap-1 text-xs"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  Search Web
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onRetry}
-                  className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Retry
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRetry}
+                className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
             )}
           </div>
         )}

@@ -1,57 +1,137 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { useChat } from '../hooks/useChat';
+import { useNavigate } from 'react-router-dom';
+import { useChat, getAllConversations, deleteConversation, markNavigationToKB, resetNavigationFlag, StoredConversation, useSeeding } from '../context/AppContext';
 import ChatMessage from '../components/ChatMessage';
 import SourceDrawer from '../components/SourceDrawer';
-import { Send, BookOpen, X, Bot, MessageSquarePlus } from 'lucide-react';
-import type { SearchResult } from '../types';
+import { Send, BookOpen, X, Bot, MessageSquarePlus, ChevronLeft, ChevronRight, Settings, Trash2, Info } from 'lucide-react';
+import type { SearchResult, Citation } from '../types';
 import { Button } from '../components/ui/Button';
+import { cn } from '../lib/utils';
+
+const ACTIVE_CONV_KEY = 'rag_active_conv_id';
+
+// Module-level guard to show info dialog only on first mount per page load
+let infoDialogShownOnce = false;
+
+// Module-level guard: persists across remounts (KB navigation) because the
+// JS module stays loaded, but is wiped on hard reload / new tab — unlike
+// sessionStorage which survives hard reloads.
+const initedSessions = new Set<string>();
 
 interface AssistantProps {
   sessionId: string;
 }
 
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export default function Assistant({ sessionId }: AssistantProps) {
-  const { messages, isLoading, sendMessage, cancel, clearMessages } = useChat(sessionId);
+  const navigate = useNavigate();
+  const { messages, isLoading, isThinking, activeConvId, sendMessage, sendFeedback, cancel, clearMessages, loadConversation } = useChat();
+  const { isSeeding, setIsSeeding } = useSeeding();
   const [input, setInput] = useState('');
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<SearchResult[]>([]);
+  const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [infoDialogOpen, setInfoDialogOpen] = useState(() => !infoDialogShownOnce);
+  const [conversations, setConversations] = useState<StoredConversation[]>(() => getAllConversations());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const sessionInitRef = useRef<Promise<any> | null>(null);
+
+  useEffect(() => {
+    if (infoDialogOpen && !infoDialogShownOnce) {
+      infoDialogShownOnce = true;
+    }
+  }, []);
+
+
+
+  useEffect(() => {
+    if (activeConvId) sessionStorage.setItem(ACTIVE_CONV_KEY, activeConvId);
+  }, [activeConvId]);
+
+  useEffect(() => {
+    setConversations(getAllConversations());
+  }, [activeConvId, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    if (initedSessions.has(sessionId)) {
+      console.log('[session] Already inited, skipping fetch');
+      sessionInitRef.current = Promise.resolve();
+      return;
+    }
+
+    console.log('[session] Firing session/init for', sessionId);
+    initedSessions.add(sessionId);
+    // Only set isSeeding on genuine first load — initedSessions guard above
+    // ensures this branch never runs on remounts or KB navigation.
+    setIsSeeding(true);
+    sessionInitRef.current = fetch('/api/session/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId }
+    })
+      .then(() => setIsSeeding(false))
+      .catch(err => {
+        console.warn('Session pre-init failed:', err.message);
+        setIsSeeding(false);
+      });
+  }, [sessionId]);
+
+  const isFirstMessage = messages.length === 0;
+
+  const activeConvTitle = activeConvId
+    ? (conversations.find(c => c.id === activeConvId)?.title ?? 'New Conversation')
+    : 'New Conversation';
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    sendMessage(input.trim());
+    if (!input.trim() || isLoading || isSeeding) return;
+    sendMessage(input.trim(), sessionInitRef.current ?? undefined);
     setInput('');
   };
 
-  const handleShowSources = (sources: SearchResult[]) => {
-    setSelectedSources(sources);
-    setSourceDrawerOpen(true);
+  const handleNewConversation = () => {
+    resetNavigationFlag();
+    clearMessages();
+    sessionStorage.removeItem(ACTIVE_CONV_KEY);
+    setSourceDrawerOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
-  const handleWebSearch = async (lastQuery: string) => {
-    try {
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-session-id': sessionId },
-        body: JSON.stringify({ query: lastQuery })
-      });
+  const handleNavigateToKB = () => {
+    markNavigationToKB();
+    navigate('/knowledge');
+  };
 
-      const data = await response.json();
-      if (data.success && data.answer) {
-        window.dispatchEvent(new CustomEvent('websearch-result', {
-          detail: { answer: data.answer, sources: data.sources }
-        }));
-      }
-    } catch (err) {
-      console.error('Web search error:', err);
-    }
+  const handleLoadConversation = (conv: StoredConversation) => {
+    loadConversation(conv);
+    setSourceDrawerOpen(false);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+  };
+
+  const handleDeleteConversation = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    deleteConversation(id);
+    setConversations(getAllConversations());
+    if (activeConvId === id) handleNewConversation();
+  };
+
+  const handleShowSources = (sources: SearchResult[], citations: Citation[]) => {
+    setSelectedSources(sources);
+    setSelectedCitations(citations);
+    setSourceDrawerOpen(true);
   };
 
   const getLastUserQuery = (): string => {
@@ -61,154 +141,301 @@ export default function Assistant({ sessionId }: AssistantProps) {
     return '';
   };
 
+  const userInitials = 'U';
+  const userName = 'You';
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
+
       {/* Sidebar */}
-      <aside className="hidden md:flex w-[280px] flex-shrink-0 flex-col border-r bg-secondary/30">
-        {/* Logo */}
-        <div className="flex h-14 flex-shrink-0 items-center gap-3 border-b px-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Bot className="h-5 w-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold leading-tight">Knowledge Assistant</span>
-            <span className="text-[11px] text-muted-foreground leading-tight">AI-Powered RAG</span>
-          </div>
+      <aside
+        className={cn(
+          'hidden md:flex flex-shrink-0 flex-col border-r bg-secondary/30 transition-all duration-300',
+          sidebarCollapsed ? 'w-[56px]' : 'w-[260px]'
+        )}
+      >
+        <div className={cn(
+          'flex h-14 flex-shrink-0 items-center border-b px-3',
+          sidebarCollapsed ? 'justify-center' : 'gap-3'
+        )}>
+          {!sidebarCollapsed && (
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Bot className="h-5 w-5" />
+            </div>
+          )}
+          {!sidebarCollapsed && (
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold leading-tight truncate">Knowledge Assistant</span>
+              <span className="text-[11px] text-muted-foreground leading-tight">AI-Powered RAG</span>
+            </div>
+          )}
+          <button
+            onClick={() => setSidebarCollapsed(c => !c)}
+            className={cn(
+              'ml-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors',
+              sidebarCollapsed && 'ml-0'
+            )}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </button>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto p-3">
-          <Link
-            to="/knowledge"
-            className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+          {!sidebarCollapsed && (
+            <div className="flex items-center justify-between px-2 pb-2 mb-2 border-b border-border/50">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Info</span>
+              <button
+                onClick={() => setInfoDialogOpen(true)}
+                className="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                title="About this app"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          {sidebarCollapsed && (
+            <button
+              onClick={() => setInfoDialogOpen(true)}
+              className="flex w-full items-center justify-center rounded-lg px-0 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              title="About this app"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            onClick={handleNewConversation}
+            className={cn(
+              'flex w-full items-center rounded-lg px-2 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground gap-2.5',
+              sidebarCollapsed && 'justify-center px-0'
+            )}
+            title="New Conversation"
           >
-            <BookOpen className="h-4 w-4" />
-            Knowledge Base
-          </Link>
+            <MessageSquarePlus className="h-4 w-4 flex-shrink-0" />
+            {!sidebarCollapsed && <span>New Conversation</span>}
+          </button>
+
+          <button
+            onClick={handleNavigateToKB}
+            className={cn(
+              'flex w-full items-center rounded-lg px-2 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground gap-2.5',
+              sidebarCollapsed && 'justify-center px-0'
+            )}
+            title="Knowledge Base"
+          >
+            <BookOpen className="h-4 w-4 flex-shrink-0" />
+            {!sidebarCollapsed && <span>Knowledge Base</span>}
+          </button>
+
+          {!sidebarCollapsed && conversations.length > 0 && (
+            <div className="pt-3">
+              <p className="px-2 pb-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Recents</p>
+              {conversations.map(conv => (
+                <button
+                  key={conv.id}
+                  onClick={() => handleLoadConversation(conv)}
+                  className={cn(
+                    'group flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm transition-colors hover:bg-accent',
+                    activeConvId === conv.id
+                      ? 'bg-accent text-accent-foreground font-medium'
+                      : 'text-muted-foreground'
+                  )}
+                >
+                  <span className="truncate text-left flex-1">{conv.title}</span>
+                  <span
+                    role="button"
+                    onClick={(e) => handleDeleteConversation(e, conv.id)}
+                    className="ml-1 flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded hover:text-destructive transition-opacity"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </nav>
 
-        {/* Bottom Actions */}
-        <div className="flex flex-shrink-0 flex-col gap-2 border-t p-3">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full justify-start gap-2"
-            onClick={clearMessages}
-          >
-            <MessageSquarePlus className="h-4 w-4" />
-            New Conversation
-          </Button>
-          <div className="flex items-center gap-2 px-3 py-1">
-            <div className="h-2 w-2 rounded-full bg-success" />
-            <span className="text-[11px] text-muted-foreground">Session active</span>
+        <div className={cn(
+          'flex flex-shrink-0 items-center border-t p-3 gap-3',
+          sidebarCollapsed && 'justify-center p-2'
+        )}>
+          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold select-none">
+            {userInitials}
           </div>
+          {!sidebarCollapsed && (
+            <>
+              <span className="flex-1 text-sm font-medium truncate">{userName}</span>
+              <button className="text-muted-foreground hover:text-foreground transition-colors" title="Settings">
+                <Settings className="h-4 w-4" />
+              </button>
+            </>
+          )}
         </div>
       </aside>
 
-      {/* Main Chat Area */}
-      <main className="flex flex-1 flex-col min-w-0">
-        {/* Header */}
-        <header className="flex h-14 flex-shrink-0 items-center justify-between border-b bg-background px-6">
-          <h2 className="text-sm font-medium">Chat</h2>
-          <span className="text-xs text-muted-foreground">
-            Session: {sessionId.slice(0, 8)}...
-          </span>
-        </header>
+      {/* Main + Sources */}
+      <div className="flex flex-1 min-w-0 overflow-hidden">
+        <main className="flex flex-1 flex-col min-w-0">
 
-        {/* Messages */}
-        <div
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto px-6 pb-28 pt-6"
-        >
-          {messages.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted mb-6">
-                <Bot className="h-8 w-8 text-muted-foreground/50" />
-              </div>
-              <h3 className="text-lg font-medium mb-1">Ask me anything</h3>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                I will search your knowledge base for answers and cite my sources.
-              </p>
+          {isFirstMessage ? (
+            <div className="flex flex-1 flex-col items-center justify-center px-4">
+              <h1 className="text-3xl font-semibold mb-8 tracking-tight">
+                {getGreeting()} 👋
+              </h1>
+              <form onSubmit={handleSubmit} className="w-full max-w-2xl">
+                <div className={cn(
+                  'relative flex items-center gap-2 rounded-2xl border bg-background shadow-md px-4 py-3 transition-opacity',
+                  isSeeding && 'opacity-70'
+                )}>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    placeholder={isSeeding ? 'Setting up things...' : 'Ask me anything...'}
+                    className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                    disabled={isSeeding}
+                    autoFocus
+                  />
+                  <Button type="submit" disabled={!input.trim() || isLoading || isSeeding} size="icon" className="h-8 w-8 rounded-xl flex-shrink-0">
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+                {isSeeding ? (
+                  <p className="mt-2 text-center text-[11px] text-muted-foreground/70 flex items-center justify-center gap-1.5">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                    Setting up things...
+                  </p>
+                ) : (
+                  <p className="mt-2 text-center text-[11px] font-bold text-muted-foreground/60">
+                    AI-generated responses may be inaccurate. Verify important information.
+                  </p>
+                )}
+              </form>
             </div>
+          ) : (
+            <>
+              <header className="flex h-14 flex-shrink-0 items-center border-b bg-background px-4">
+                <span className="text-sm font-semibold truncate">{activeConvTitle}</span>
+              </header>
+
+              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-2 pb-28 pt-6">
+                <div className="mx-auto max-w-5xl space-y-6">
+                  {messages.map(msg => (
+                    <ChatMessage
+                      key={msg.id}
+                      message={msg}
+                      onShowSources={() => msg.sources && handleShowSources(msg.sources, msg.citations || [])}
+                      onRetry={() => getLastUserQuery() && sendMessage(getLastUserQuery())}
+                      onFeedback={(messageId, feedbackType) => sendFeedback(messageId, feedbackType)}
+                    />
+                  ))}
+
+                  {isThinking && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                      <span className="inline-flex gap-1">
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                      <span>Thinking...</span>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+
+              <div className="flex flex-shrink-0 flex-col border-t bg-background">
+                <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-5xl items-end gap-2 px-2 py-4">
+                  <div className="relative flex-1">
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      placeholder="Ask a question..."
+                      className="w-full rounded-xl border bg-background px-4 py-3 pr-12 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    />
+                  </div>
+                  {isLoading ? (
+                    <Button type="button" variant="outline" size="icon" onClick={cancel} className="h-11 w-11 flex-shrink-0 rounded-xl">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  ) : (
+                    <Button type="submit" disabled={!input.trim()} className="h-11 w-11 flex-shrink-0 rounded-xl" size="icon">
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  )}
+                </form>
+                <div className="pb-2 text-center">
+                  <span className="mt-2 text-center text-[11px] font-bold text-muted-foreground/60">
+                    AI-generated responses may be inaccurate. Verify important information.
+                  </span>
+                </div>
+              </div>
+            </>
           )}
+        </main>
 
-          <div className="mx-auto max-w-3xl space-y-6">
-            {messages.map(msg => (
-              <ChatMessage
-                key={msg.id}
-                message={msg}
-                onShowSources={() => msg.sources && handleShowSources(msg.sources)}
-                onWebSearch={() => handleWebSearch(getLastUserQuery())}
-                onRetry={() => getLastUserQuery() && sendMessage(getLastUserQuery())}
-              />
-            ))}
+        {sourceDrawerOpen && (
+          <SourceDrawer
+            isOpen={sourceDrawerOpen}
+            onClose={() => setSourceDrawerOpen(false)}
+            sources={selectedSources}
+            citations={selectedCitations}
+          />
+        )}
+      </div>
 
-            {isLoading && messages[messages.length - 1]?.role === 'user' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                <span className="inline-flex gap-1">
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '300ms' }} />
-                </span>
-                <span>Thinking...</span>
+      {/* Info Dialog */}
+      {infoDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="relative w-full max-w-3xl mx-4 bg-background rounded-xl shadow-2xl border animate-in fade-in-0 zoom-in-95 duration-200">
+            <button
+              onClick={() => setInfoDialogOpen(false)}
+              className="absolute top-3 right-3 flex h-7 w-7 items-center justify-center rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="p-6 pt-12">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <Bot className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">Knowledge Assistant</h2>
+                  <p className="text-xs text-muted-foreground">AI-Powered RAG System</p>
+                </div>
               </div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        {/* Input Area */}
-        <div className="flex flex-shrink-0 flex-col border-t bg-background">
-          <form
-            onSubmit={handleSubmit}
-            className="mx-auto flex w-full max-w-3xl items-end gap-2 px-6 py-4"
-          >
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Ask a question..."
-                className="w-full rounded-xl border bg-background px-4 py-3 pr-12 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                disabled={isLoading}
-              />
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  This is a <strong className="text-foreground">Retrieval-Augmented Generation (RAG)</strong> application that helps you query and understand your document knowledge base.
+                </p>
+                <p>
+                  <strong className="text-foreground">How it works:</strong>
+                </p>
+                <ul className="list-disc list-inside space-y-1.5 text-xs leading-relaxed">
+                  <li>Upload PDF documents to the Knowledge Base</li>
+                  <li>Documents are processed and embedded into a vector database</li>
+                  <li>Ask questions in natural language</li>
+                  <li>The system retrieves relevant passages and generates accurate, contextual answers</li>
+                  <li>View source citations to verify information</li>
+                </ul>
+                <p className="text-xs pt-2">
+                  Responses are AI-generated. Always verify important information using the provided source citations.
+                </p>
+              </div>
+              <div className="mt-6 flex justify-end">
+                <Button onClick={() => setInfoDialogOpen(false)} className="px-4">
+                  Got it
+                </Button>
+              </div>
             </div>
-            {isLoading ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={cancel}
-                className="h-11 w-11 flex-shrink-0 rounded-xl"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                disabled={!input.trim()}
-                className="h-11 w-11 flex-shrink-0 rounded-xl"
-                size="icon"
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            )}
-          </form>
-          <div className="pb-2 text-center">
-            <span className="text-[11px] text-muted-foreground/60">
-              AI-generated responses may be inaccurate. Verify important information.
-            </span>
           </div>
         </div>
-      </main>
-
-      {/* Source Drawer */}
-      <SourceDrawer
-        isOpen={sourceDrawerOpen}
-        onClose={() => setSourceDrawerOpen(false)}
-        sources={selectedSources}
-      />
+      )}
     </div>
   );
 }
