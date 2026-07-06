@@ -16,6 +16,27 @@ export const supabase = createClient(
 const sessionInsertPromises = new Map();
 
 /**
+ * Recursively removes null bytes (\u0000) from strings, arrays, or objects.
+ * PostgreSQL (Supabase) does not support \u0000 in text/jsonb fields.
+ */
+function sanitizeNullBytes(val) {
+  if (typeof val === 'string') {
+    return val.replace(/\u0000/g, '');
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitizeNullBytes);
+  }
+  if (val !== null && typeof val === 'object') {
+    const cleanObj = {};
+    for (const key of Object.keys(val)) {
+      cleanObj[key] = sanitizeNullBytes(val[key]);
+    }
+    return cleanObj;
+  }
+  return val;
+}
+
+/**
  * Asynchronously inserts conversation data into Supabase.
  * Chains insertions for the same session to ensure they complete in order.
  */
@@ -24,8 +45,9 @@ export function insertConversationAsync(sessionId, data) {
 
   const nextPromise = previousPromise
     .then(async () => {
-      console.log(`[Supabase] Inserting conversation for session ${sessionId}, answer_key: ${data.answer_key}`);
-      const { error } = await supabase.from('Conversation_History').insert(data);
+      const cleanData = sanitizeNullBytes(data);
+      console.log(`[Supabase] Inserting conversation for session ${sessionId}, answer_key: ${cleanData.answer_key}`);
+      const { error } = await supabase.from('Conversation_History').insert(cleanData);
       if (error) {
         console.error('[Supabase] Error inserting conversation history:', error);
       } else {
@@ -33,7 +55,7 @@ export function insertConversationAsync(sessionId, data) {
       }
     })
     .catch((err) => {
-      //console.error('[Supabase] Unexpected error during insertion chain:', err);
+      console.error('[Supabase] Unexpected error during insertion chain:', err);
     });
 
   sessionInsertPromises.set(sessionId, nextPromise);
