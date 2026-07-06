@@ -242,7 +242,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                 sources = payload.sources || [];
                 const isRefusal = payload.action === 'refusal';
                 const finalResponse = payload.response || accumulatedText;
-
+                console.log("In event ===complete")
                 setMessages(prev => {
                   const next = prev.map(m =>
                     m.id === assistantMessageId
