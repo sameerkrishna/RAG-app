@@ -4,8 +4,13 @@
   functions = "netlify/functions"
 
 [functions]
-  node_bundler = "esbuild"
+  node_bundler = "zip"
   directory = "netlify/functions"
+  node_version = "18"
+
+# Include server folder and google_credentials in function bundle
+[functions."api"]
+  included_files = ["server/**/*", "google_credentials/**/*", "seed_documents/**/*"]
 
 # Block access to sensitive files
 [[redirects]]

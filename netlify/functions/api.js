@@ -49,7 +49,7 @@ app.get('/ping', (req, res) => {
 });
 
 // SESSION INIT ROUTE
-app.post('/session/init', async (req, res) => {
+app.post('/session/init', (req, res) => {
   const sessionId = req.headers['x-session-id'];
 
   console.log('[session/init] Request received for session:', sessionId);
@@ -60,16 +60,13 @@ app.post('/session/init', async (req, res) => {
   }
 
   getOrCreateSession(sessionId);
+  // Respond immediately — Chroma init runs in the background so the
+  // browser never sees a 502 from a slow/cold-start ChromaDB connection.
+  res.json({ ready: true, sessionId });
 
-  try {
-    await initSessionWithGlobalDocs(sessionId);
-    console.log('[session/init] Session initialized successfully:', sessionId);
-    res.json({ ready: true, sessionId });
-  } catch (err) {
-    console.error('[session/init] Failed:', err.message);
-    console.error('[session/init] Stack:', err.stack);
-    res.status(500).json({ ready: false, sessionId, error: err.message, stack: err.stack });
-  }
+  initSessionWithGlobalDocs(sessionId).catch(err => {
+    console.error('[session/init] Background init error:', err.message);
+  });
 });
 
 // SESSION RESTORE MEMORY ROUTE

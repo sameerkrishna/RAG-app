@@ -162,7 +162,11 @@ function createAIClient() {
   });
 }
 
-const ai = createAIClient();
+let _ai = null;
+function getAI() {
+  if (!_ai) _ai = createAIClient();
+  return _ai;
+}
 
 // ============================================================
 // 4. TOKEN CALCULATION (uses stored token_count if available)
@@ -193,7 +197,7 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
     // `ai.batches` is for async batch-prediction jobs. Synchronous embedding calls go
     // through `ai.models.embedContent`, with one shared taskType/outputDimensionality
     // config applied across all `contents` in the call.
-    const response = await ai.models.embedContent({
+    const response = await getAI().models.embedContent({
       model: modelName,
       contents: texts.map(text => (typeof text === 'string' ? text : String(text))),
       config: {

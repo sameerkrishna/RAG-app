@@ -4,19 +4,26 @@ import { v4 as uuidv4 } from 'uuid';
 
 const BATCH_SIZE = 300;
 
-// ── Shared schema: dense embeddings (managed externally) + BM25 sparse index ──
-const bm25EmbeddingFunction = new ChromaBm25EmbeddingFunction();
-const collectionSchema = new Schema().createIndex(
-  new SparseVectorIndexConfig({
-    embeddingFunction: bm25EmbeddingFunction,
-    sourceKey: DOCUMENT_KEY,
-    bm25: true
-  }),
-  'sparse_bm25'
-);
-
 let cloudClient = null;
 let globalCollection = null;
+let _globalCollectionPromise = null;
+let _collectionSchema = null;
+
+// Lazy — avoids loading BM25 model files at module import time
+function getCollectionSchema() {
+  if (!_collectionSchema) {
+    const bm25 = new ChromaBm25EmbeddingFunction();
+    _collectionSchema = new Schema().createIndex(
+      new SparseVectorIndexConfig({
+        embeddingFunction: bm25,
+        sourceKey: DOCUMENT_KEY,
+        bm25: true
+      }),
+      'sparse_bm25'
+    );
+  }
+  return _collectionSchema;
+}
 
 function getCloudClient() {
   if (!cloudClient) {
@@ -47,26 +54,35 @@ function getCloudClient() {
 }
 
 export async function getGlobalCollection() {
-  if (!globalCollection) {
-    const client = getCloudClient();
-    const collectionName = process.env.CHROMA_GLOBAL_COLLECTION || 'seed_db';
-    try {
-      globalCollection = await client.getOrCreateCollection({
-        name: collectionName,
-        schema: collectionSchema,
-        metadata: {
-          description: 'Permanent seed documents for RAG',
-          type: 'global_knowledge'
-        },
-        embeddingFunction: null
-      });
-      console.log(`\u2705 Global collection ready: ${collectionName}`);
-    } catch (error) {
-      console.error('Failed to connect to global collection:', error);
-      throw error;
-    }
+  if (globalCollection) return globalCollection;
+
+  // Deduplicate concurrent callers — all await the same promise
+  if (!_globalCollectionPromise) {
+    _globalCollectionPromise = (async () => {
+      const client = getCloudClient();
+      const collectionName = process.env.CHROMA_GLOBAL_COLLECTION || 'seed_db';
+      try {
+        const col = await client.getOrCreateCollection({
+          name: collectionName,
+          schema: getCollectionSchema(),
+          metadata: {
+            description: 'Permanent seed documents for RAG',
+            type: 'global_knowledge'
+          },
+          embeddingFunction: null
+        });
+        globalCollection = col;
+        console.log(`\u2705 Global collection ready: ${collectionName}`);
+        return col;
+      } catch (error) {
+        _globalCollectionPromise = null; // allow retry on next call
+        console.error('Failed to connect to global collection:', error);
+        throw error;
+      }
+    })();
   }
-  return globalCollection;
+
+  return _globalCollectionPromise;
 }
 
 /**

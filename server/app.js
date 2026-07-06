@@ -46,7 +46,7 @@ app.get('/ping', (req, res) => {
 // ===============================
 // SESSION INIT ROUTE
 // ===============================
-app.post('/session/init', async (req, res) => {
+app.post('/session/init', (req, res) => {
   const sessionId = req.headers['x-session-id'];
 
   if (!sessionId) {
@@ -54,14 +54,13 @@ app.post('/session/init', async (req, res) => {
   }
 
   getOrCreateSession(sessionId);
+  // Respond immediately — Chroma init runs in the background so the
+  // browser never sees a 502 from a slow/cold-start ChromaDB connection.
+  res.json({ ready: true, sessionId });
 
-  try {
-    await initSessionWithGlobalDocs(sessionId);
-    res.json({ ready: true, sessionId });
-  } catch (err) {
-    console.warn('Session init warning:', err.message);
-    res.json({ ready: false, sessionId, warning: err.message });
-  }
+  initSessionWithGlobalDocs(sessionId).catch(err => {
+    console.warn('[session/init] Background init error:', err.message);
+  });
 });
 
 // ===============================
