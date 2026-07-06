@@ -5,10 +5,31 @@ let genAI = null;
 
 function getGenAI() {
   if (!genAI) {
+    const project = process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0';
+    const location = 'global';
+
+    // Support credentials from env var (for serverless) or file (for local dev)
+    const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
+
+    if (credentialsJson) {
+      try {
+        const credentials = JSON.parse(credentialsJson);
+        genAI = new GoogleGenAI({
+          vertexai: true,
+          project,
+          location,
+          credentials
+        });
+        return genAI;
+      } catch (e) {
+        console.warn('Failed to parse GOOGLE_CREDENTIALS_JSON, falling back to default auth');
+      }
+    }
+
     genAI = new GoogleGenAI({
       vertexai: true,
-      project: process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-      location: 'global'
+      project,
+      location
     });
   }
   return genAI;

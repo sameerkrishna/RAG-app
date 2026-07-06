@@ -1,16 +1,15 @@
+import serverless from 'serverless-http';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { EventEmitter } from 'events';
 
-dotenv.config();
-
-import healthRouter from './api/health.js';
-import documentsRouter from './api/documents.js';
-import chatRouter from './api/chat.js';
-import feedbackRouter from './api/feedback.js';
-import { getOrCreateSession, initSessionWithGlobalDocs } from './services/sessionService.js';
-import { addTurnWithCitations, clearMemory } from './services/memoryService.js';
+// Import routers
+import healthRouter from '../../server/api/health.js';
+import documentsRouter from '../../server/api/documents.js';
+import chatRouter from '../../server/api/chat.js';
+import feedbackRouter from '../../server/api/feedback.js';
+import { getOrCreateSession, initSessionWithGlobalDocs } from '../../server/services/sessionService.js';
+import { addTurnWithCitations, clearMemory } from '../../server/services/memoryService.js';
 
 const app = express();
 
@@ -32,20 +31,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===============================
 // TEST ROUTE
-// ===============================
 app.get('/ping', (req, res) => {
-  console.log('✅ PING ROUTE EXECUTED');
+  console.log('PING ROUTE EXECUTED');
   res.json({
     success: true,
     message: 'Express backend is alive'
   });
 });
 
-// ===============================
 // SESSION INIT ROUTE
-// ===============================
 app.post('/session/init', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
 
@@ -64,9 +59,7 @@ app.post('/session/init', async (req, res) => {
   }
 });
 
-// ===============================
 // SESSION RESTORE MEMORY ROUTE
-// ===============================
 app.post('/session/restore-memory', (req, res) => {
   const { convId, messages } = req.body;
 
@@ -75,7 +68,6 @@ app.post('/session/restore-memory', (req, res) => {
   }
 
   try {
-    // Always wipe the convId memory first so replaying never doubles up turns
     clearMemory(convId);
 
     for (const msg of messages) {
@@ -90,21 +82,13 @@ app.post('/session/restore-memory', (req, res) => {
   }
 });
 
-// ===============================
 // ROUTERS
-// ===============================
-console.log('Mounting routers...');
-
 app.use('/health', healthRouter);
 app.use('/documents', documentsRouter);
 app.use('/chat', chatRouter);
 app.use('/feedback', feedbackRouter);
 
-console.log('✅ Routers mounted');
-
-// ===============================
 // ERROR HANDLER
-// ===============================
 app.use((err, req, res, next) => {
   console.error('ERROR MIDDLEWARE');
   console.error(err);
@@ -114,9 +98,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ===============================
 // 404
-// ===============================
 app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
@@ -124,4 +106,6 @@ app.use((req, res) => {
   });
 });
 
-export default app;
+export const handler = serverless(app, {
+  basePath: '/api'
+});

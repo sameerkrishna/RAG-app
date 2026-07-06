@@ -75,11 +75,35 @@ const MAX_RETRY_ATTEMPTS = 5;
 // ============================================================
 // 3. AI CLIENT (single, reusable instance)
 // ============================================================
-const ai = new GoogleGenAI({
-  vertexai: true,
-  project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-  location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
-});
+function createAIClient() {
+  const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0';
+  const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+
+  // Support credentials from env var (for serverless) or file (for local dev)
+  const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
+
+  if (credentialsJson) {
+    try {
+      const credentials = JSON.parse(credentialsJson);
+      return new GoogleGenAI({
+        vertexai: true,
+        project,
+        location,
+        credentials
+      });
+    } catch (e) {
+      console.warn('Failed to parse GOOGLE_CREDENTIALS_JSON, falling back to default auth');
+    }
+  }
+
+  return new GoogleGenAI({
+    vertexai: true,
+    project,
+    location
+  });
+}
+
+const ai = createAIClient();
 
 // ============================================================
 // 4. TOKEN CALCULATION (uses stored token_count if available)
