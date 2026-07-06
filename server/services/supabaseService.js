@@ -61,17 +61,17 @@ export async function updateFeedbackAsync(answerKey, feedback, retries = 2) {
     if (error) {
       throw error;
     } else {
-      console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
+      //console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
     }
   } catch (error) {
     const isNetworkError = error.message && error.message.includes('fetch failed');
     if (isNetworkError && retries > 0) {
-      console.warn(`[Supabase] Network error during update, retrying... (${retries} attempts left)`);
+      //console.warn(`[Supabase] Network error during update, retrying... (${retries} attempts left)`);
       // Wait briefly before retrying (e.g., 500ms)
       await new Promise(res => setTimeout(res, 500));
       return updateFeedbackAsync(answerKey, feedback, retries - 1);
     }
-    console.error('[Supabase] Error updating feedback:', error);
+    //console.error('[Supabase] Error updating feedback:', error);
     throw error;
   }
 }
