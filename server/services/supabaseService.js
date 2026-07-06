@@ -47,3 +47,20 @@ export function insertConversationAsync(sessionId, data) {
 
   return nextPromise;
 }
+
+/**
+ * Asynchronously updates the feedback for a conversation in Supabase.
+ */
+export async function updateFeedbackAsync(answerKey, feedback) {
+  const { error } = await supabase
+    .from('Conversation_History')
+    .update({ feedback })
+    .eq('answer_key', answerKey);
+  
+  if (error) {
+    console.error('[Supabase] Error updating feedback:', error);
+    throw error;
+  } else {
+    console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
+  }
+}
