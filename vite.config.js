@@ -95,6 +95,36 @@ function copyNetlifyFiles() {
                 fs.copyFileSync(netlifyToml, netlifyTomlDest);
                 console.log('✅ netlify.toml copied to dist');
             }
+            // Copy seed_documents folder to dist
+            var seedSrc = path.resolve(__dirname, 'seed_documents');
+            var seedDest = path.resolve(__dirname, 'dist/seed_documents');
+            if (fs.existsSync(seedSrc)) {
+                fs.mkdirSync(seedDest, { recursive: true });
+                var files = fs.readdirSync(seedSrc);
+                files.forEach(function (file) {
+                    var srcFile = path.join(seedSrc, file);
+                    var destFile = path.join(seedDest, file);
+                    if (fs.statSync(srcFile).isFile()) {
+                        fs.copyFileSync(srcFile, destFile);
+                    }
+                });
+                console.log("\u2705 seed_documents copied to dist (".concat(files.length, " files)"));
+            }
+            // Copy google_credentials folder to dist
+            var credsSrc = path.resolve(__dirname, 'google_credentials');
+            var credsDest = path.resolve(__dirname, 'dist/google_credentials');
+            if (fs.existsSync(credsSrc)) {
+                fs.mkdirSync(credsDest, { recursive: true });
+                var files = fs.readdirSync(credsSrc);
+                files.forEach(function (file) {
+                    var srcFile = path.join(credsSrc, file);
+                    var destFile = path.join(credsDest, file);
+                    if (fs.statSync(srcFile).isFile()) {
+                        fs.copyFileSync(srcFile, destFile);
+                    }
+                });
+                console.log("\u2705 google_credentials copied to dist (".concat(files.length, " files)"));
+            }
         }
     };
 }

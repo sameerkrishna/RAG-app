@@ -7,11 +7,24 @@
   node_bundler = "esbuild"
   directory = "netlify/functions"
 
+# API routes - proxy to serverless function
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
   status = 200
 
+# Static assets - serve directly
+[[redirects]]
+  from = "/seed_documents/*"
+  to = "/seed_documents/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/assets/*"
+  to = "/assets/:splat"
+  status = 200
+
+# SPA fallback - must be last
 [[redirects]]
   from = "/*"
   to = "/index.html"

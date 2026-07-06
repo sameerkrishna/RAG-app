@@ -34,7 +34,18 @@
     fs.mkdirSync(uploadDir, { recursive: true });
   }
 
-  const seedDir = path.resolve(__dirname, '../../seed_documents');
+  // Seed documents directory - works in both dev and serverless
+  // In dev: server/api/../../seed_documents
+  // In serverless: netlify/functions/../../seed_documents (copied to dist)
+  let seedDir = path.resolve(__dirname, '../../seed_documents');
+  if (!fs.existsSync(seedDir)) {
+    // Try alternative path for serverless deployment
+    seedDir = path.resolve(process.cwd(), 'seed_documents');
+  }
+  if (!fs.existsSync(seedDir)) {
+    // Try dist folder for deployed static files
+    seedDir = path.resolve(process.cwd(), 'dist/seed_documents');
+  }
 
   // ─── SSE event helper ──────────────────────────────────────────────────────
   function sseEvent(res, event, data) {
