@@ -59,12 +59,18 @@ function copyStaticAssets() {
       // Copy google_credentials folder to dist
       const credsSrc = path.resolve(__dirname, 'google_credentials');
       const credsDest = path.resolve(__dirname, 'dist/google_credentials');
+      console.log('CWD' + process.cwd())
+      console.log('Dir name' + __dirname);
+      console.log(credsSrc);
+      console.log(credsDest);
       if (fs.existsSync(credsSrc)) {
         fs.mkdirSync(credsDest, { recursive: true });
         const files = fs.readdirSync(credsSrc);
         files.forEach(file => {
           const srcFile = path.join(credsSrc, file);
+          console.log(srcFile);
           const destFile = path.join(credsDest, file);
+          console.log(destFile);
           if (fs.statSync(srcFile).isFile()) {
             fs.copyFileSync(srcFile, destFile);
           }
