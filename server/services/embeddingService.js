@@ -1,11 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ============================================================
 // 1. SLIDING WINDOW RATE LIMITER
@@ -81,92 +75,11 @@ const MAX_RETRY_ATTEMPTS = 5;
 // ============================================================
 // 3. AI CLIENT (single, reusable instance)
 // ============================================================
-function loadGoogleCredentials() {
-  // 1. Try env var first (supports raw JSON or base64-encoded JSON)
-  const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
-  if (credentialsJson) {
-    try {
-      // Try raw JSON first
-      return JSON.parse(credentialsJson);
-    } catch (e) {
-      try {
-        // Try base64 decode (useful for platforms with character limit issues)
-        const decoded = Buffer.from(credentialsJson, 'base64').toString('utf-8');
-        return JSON.parse(decoded);
-      } catch (e2) {
-        console.warn('[embedding] Failed to parse GOOGLE_CREDENTIALS_JSON (tried raw and base64)');
-      }
-    }
-  }
-
-  // 2. Try GOOGLE_APPLICATION_CREDENTIALS file path
-  const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (credsPath) {
-    try {
-      // Handle relative paths
-      const absolutePath = path.isAbsolute(credsPath)
-        ? credsPath
-        : path.resolve(process.cwd(), credsPath);
-      if (fs.existsSync(absolutePath)) {
-        return JSON.parse(fs.readFileSync(absolutePath, 'utf-8'));
-      }
-    } catch (e) {
-      console.warn('[embedding] Failed to read GOOGLE_APPLICATION_CREDENTIALS:', e.message);
-    }
-  }
-
-  // 3. Try common deployed locations
-  const possiblePaths = [
-    path.resolve(__dirname, '../../google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    path.resolve(process.cwd(), 'google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    path.resolve(process.cwd(), 'dist/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    '/var/task/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json',
-    '/tmp/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'
-  ];
-
-  for (const p of possiblePaths) {
-    try {
-      if (fs.existsSync(p)) {
-        console.log('[embedding] Found credentials at:', p);
-        return JSON.parse(fs.readFileSync(p, 'utf-8'));
-      }
-    } catch (e) {
-      // Continue to next path
-    }
-  }
-
-  return null;
-}
-
-function createAIClient() {
-  const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0';
-  const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-
-  const credentials = loadGoogleCredentials();
-
-  if (credentials) {
-    console.log('[embedding] Using explicit Google credentials');
-    return new GoogleGenAI({
-      vertexai: true,
-      project,
-      location,
-      credentials
-    });
-  }
-
-  console.log('[embedding] Using default Google auth');
-  return new GoogleGenAI({
-    vertexai: true,
-    project,
-    location
-  });
-}
-
-let _ai = null;
-function getAI() {
-  if (!_ai) _ai = createAIClient();
-  return _ai;
-}
+const ai = new GoogleGenAI({
+  vertexai: true,
+  project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+  location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
+});
 
 // ============================================================
 // 4. TOKEN CALCULATION (uses stored token_count if available)
@@ -197,7 +110,7 @@ async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
     // `ai.batches` is for async batch-prediction jobs. Synchronous embedding calls go
     // through `ai.models.embedContent`, with one shared taskType/outputDimensionality
     // config applied across all `contents` in the call.
-    const response = await getAI().models.embedContent({
+    const response = await ai.models.embedContent({
       model: modelName,
       contents: texts.map(text => (typeof text === 'string' ? text : String(text))),
       config: {

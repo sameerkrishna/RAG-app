@@ -1,93 +1,15 @@
 import { GoogleGenAI } from '@google/genai';
 import { LLMUnavailableError } from '../utils/errors.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 let genAI = null;
 
-function loadGoogleCredentials() {
-  // 1. Try env var first (supports raw JSON or base64-encoded JSON)
-  const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
-  if (credentialsJson) {
-    try {
-      // Try raw JSON first
-      return JSON.parse(credentialsJson);
-    } catch (e) {
-      try {
-        // Try base64 decode (useful for platforms with character limit issues)
-        const decoded = Buffer.from(credentialsJson, 'base64').toString('utf-8');
-        return JSON.parse(decoded);
-      } catch (e2) {
-        console.warn('[gemini] Failed to parse GOOGLE_CREDENTIALS_JSON (tried raw and base64)');
-      }
-    }
-  }
-
-  // 2. Try GOOGLE_APPLICATION_CREDENTIALS file path
-  const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (credsPath) {
-    try {
-      const absolutePath = path.isAbsolute(credsPath)
-        ? credsPath
-        : path.resolve(process.cwd(), credsPath);
-      if (fs.existsSync(absolutePath)) {
-        return JSON.parse(fs.readFileSync(absolutePath, 'utf-8'));
-      }
-    } catch (e) {
-      console.warn('[gemini] Failed to read GOOGLE_APPLICATION_CREDENTIALS:', e.message);
-    }
-  }
-
-  // 3. Try common deployed locations
-  const possiblePaths = [
-    path.resolve(__dirname, '../../google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    path.resolve(process.cwd(), 'google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    path.resolve(process.cwd(), 'dist/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'),
-    '/var/task/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json',
-    '/tmp/google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json'
-  ];
-
-  for (const p of possiblePaths) {
-    try {
-      if (fs.existsSync(p)) {
-        console.log('[gemini] Found credentials at:', p);
-        return JSON.parse(fs.readFileSync(p, 'utf-8'));
-      }
-    } catch (e) {
-      // Continue to next path
-    }
-  }
-
-  return null;
-}
-
 function getGenAI() {
   if (!genAI) {
-    const project = process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0';
-    const location = 'global';
-
-    const credentials = loadGoogleCredentials();
-
-    if (credentials) {
-      console.log('[gemini] Using explicit Google credentials');
-      genAI = new GoogleGenAI({
-        vertexai: true,
-        project,
-        location,
-        credentials
-      });
-    } else {
-      console.log('[gemini] Using default Google auth');
-      genAI = new GoogleGenAI({
-        vertexai: true,
-        project,
-        location
-      });
-    }
+    genAI = new GoogleGenAI({
+      vertexai: true,
+      project: process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+      location: 'global'
+    });
   }
   return genAI;
 }
