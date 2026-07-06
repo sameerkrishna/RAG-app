@@ -18,6 +18,56 @@ const __dirname = dirname(__filename);
 const SEED_DIR = path.join(__dirname, '..', 'seed_documents');
 const BATCH_SIZE = 300;
 
+/**
+ * Join pdf.js text-content items into a single string using each item's
+ * x-position (transform[4]) and width to decide whether a space belongs
+ * between two items, instead of always joining with a single space.
+ *
+ * This avoids two common artifacts from naive `.join(' ')`:
+ *  - words split across adjacent text runs getting a phantom space
+ *    inserted in the middle (e.g. "Sav ings")
+ *  - adjacent words with no space in the PDF's internal runs getting
+ *    glued together (e.g. "the report" -> "thereport")
+ *
+ * Empty-string items are pdf.js's signal for a line break, which we
+ * convert to a newline so paragraph structure isn't lost.
+ */
+function joinTextItems(items) {
+  let out = '';
+  let prevItem = null;
+
+  for (const item of items) {
+    const str = item.str;
+    if (str === undefined) { prevItem = item; continue; }
+
+    if (str === '') {
+      // pdf.js emits empty items to signal line breaks
+      if (!/\n$/.test(out)) out += '\n';
+      prevItem = null;
+      continue;
+    }
+
+    if (prevItem && prevItem.str) {
+      const prevEnd = prevItem.transform[4] + (prevItem.width || 0);
+      const curStart = item.transform[4];
+      const gap = curStart - prevEnd;
+      const fontH = Math.abs(item.transform[3]) || 10;
+      const spaceThreshold = fontH * 0.25;
+
+      const alreadySpaced = /\s$/.test(out) || /^\s/.test(str);
+      if (!alreadySpaced && gap > spaceThreshold) {
+        out += ' ';
+      }
+      // else: items are touching/overlapping -> same word, no space inserted
+    }
+
+    out += str;
+    prevItem = item;
+  }
+
+  return out;
+}
+
 async function parsePDF(filePath) {
   const buffer = fs.readFileSync(filePath);
 
@@ -25,7 +75,7 @@ async function parsePDF(filePath) {
   await pdf(buffer, {
     pagerender: (pageData) => {
       return pageData.getTextContent().then(tc => {
-        const pageText = tc.items.map(i => i.str).join(' ');
+        const pageText = joinTextItems(tc.items);
         pages.push(pageText);
         return pageText;
       });
@@ -52,11 +102,40 @@ async function parsePDF(filePath) {
   return { fullText, pageMap, totalPages };
 }
 
-function getPageNumber(charStart, pageMap) {
+/**
+ * Given a chunk's [charStart, charEnd) range, find which page(s) it
+ * overlaps. Returns the majority page (most overlapping chars, used
+ * for `page_number` for backward compatibility) plus the true start/end
+ * pages so chunks spanning a page break aren't silently mislabeled with
+ * just the first page.
+ */
+function getPageRange(charStart, charEnd, pageMap) {
+  let startPage = null;
+  let endPage = null;
+  let bestPage = null;
+  let maxOverlap = -1;
+
   for (const entry of pageMap) {
-    if (charStart >= entry.start && charStart <= entry.end) return entry.page;
+    const overlapStart = Math.max(charStart, entry.start);
+    const overlapEnd = Math.min(charEnd, entry.end);
+    const overlap = overlapEnd - overlapStart;
+    if (overlap <= 0) continue;
+
+    if (startPage === null) startPage = entry.page;
+    endPage = entry.page;
+
+    if (overlap > maxOverlap) {
+      maxOverlap = overlap;
+      bestPage = entry.page;
+    }
   }
-  return pageMap[pageMap.length - 1]?.page || 1;
+
+  if (startPage === null) {
+    const lastPage = pageMap[pageMap.length - 1]?.page || 1;
+    return { page: lastPage, pageStart: lastPage, pageEnd: lastPage };
+  }
+
+  return { page: bestPage, pageStart: startPage, pageEnd: endPage };
 }
 
 /**
@@ -168,7 +247,7 @@ async function buildSeedDatabase() {
     });
 
     const chunks = rawChunks.map((chunk, idx) => {
-      const pageNumber = getPageNumber(chunk.charStart, pageMap);
+      const { page, pageStart, pageEnd } = getPageRange(chunk.charStart, chunk.charEnd, pageMap);
       const chunkId = createHash('md5')
         .update(`${filename}::${chunk.text}`)
         .digest('hex')
@@ -182,7 +261,9 @@ async function buildSeedDatabase() {
           chunk_id: chunkId,
           chunk_index: idx,
           total_chunks: rawChunks.length,
-          page_number: pageNumber,
+          page_number: page,       // majority page — kept for backward compatibility
+          page_start: pageStart,   // new: first page this chunk overlaps
+          page_end: pageEnd,       // new: last page this chunk overlaps
           total_pages: totalPages,
           source_type: 'global',
           session_id: 'global',
