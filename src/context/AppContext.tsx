@@ -263,9 +263,11 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                   chunks: chunksList,
                   llm_response: finalResponse
                 };
-
+                console.log("Inserting into supabase")
+                console.log('answer key'+assistantMessageId)
+                console.log(conversationJson)
                 const insertConversation = async () => {
-                  const { error: dbError } = await supabase.from('Conversation_History').insert({
+                  const { data, error: dbError } = await supabase.from('Conversation_History').insert({
                     answer_key: assistantMessageId,
                     feedback: 'none',
                     conversation: conversationJson
