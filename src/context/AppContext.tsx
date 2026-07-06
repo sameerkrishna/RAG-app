@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types';
-import path from 'path';
 
 // ── localStorage helpers ───────────────────────────────────────────────────
 const STORAGE_KEY = 'rag_conversations';
