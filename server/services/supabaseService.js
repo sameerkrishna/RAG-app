@@ -27,7 +27,7 @@ export function insertConversationAsync(sessionId, data) {
       console.log(`[Supabase] Inserting conversation for session ${sessionId}, answer_key: ${data.answer_key}`);
       const { error } = await supabase.from('Conversation_History').insert(data);
       if (error) {
-        ////console.error('[Supabase] Error inserting conversation history:', error);
+        console.error('[Supabase] Error inserting conversation history:', error);
       } else {
         console.log(`[Supabase] Successfully inserted conversation for session ${sessionId}`);
       }
