@@ -4,7 +4,7 @@ import { retrieveForQuery, generateCitations, formatContextForPrompt } from '../
 import { streamResponse } from '../services/geminiService.js';
 import { addTurnWithCitations, getRecentTurns } from '../services/memoryService.js';
 import { getOrCreateSession, getDeletedDocumentIds } from '../services/sessionService.js';
-import { insertConversationAsync } from '../services/supabaseService.js';
+import { insertConversationAsync, updateFeedbackAsync } from '../services/supabaseService.js';
 
 const router = Router();
 
@@ -34,7 +34,7 @@ function expandQuery(query) {
 }
 
 export async function handleChatStream(req, res) {
-  const { query, sessionId: providedSessionId, convId: providedConvId } = req.body;
+  const { query, sessionId: providedSessionId, convId: providedConvId, messageId } = req.body;
 
   if (!query || typeof query !== 'string' || query.trim().length === 0) {
     return res.status(400).json({ error: 'Query is required', code: 'MISSING_QUERY' });
@@ -42,7 +42,7 @@ export async function handleChatStream(req, res) {
 
   const sessionId = providedSessionId || uuidv4();
   const convId    = providedConvId || uuidv4();
-  const answerId  = uuidv4();
+  const answerId  = messageId || uuidv4();
 
   getOrCreateSession(sessionId);
 
@@ -254,7 +254,22 @@ export async function getSources(req, res) {
   res.status(404).json({ error: 'Sources not found', code: 'SOURCES_NOT_FOUND' });
 }
 
+export async function handleFeedback(req, res) {
+  const { answerId, feedback } = req.body;
+  if (!answerId || !feedback) {
+    return res.status(400).json({ error: 'Missing answerId or feedback' });
+  }
+
+  try {
+    await updateFeedbackAsync(answerId, feedback);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Error updating feedback' });
+  }
+}
+
 router.post('/', handleChatStream);
+router.post('/feedback', handleFeedback);
 router.get('/sources/:answerId', getSources);
 
 export default router;
