@@ -3,11 +3,13 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index" }
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index"
+    }
   ],
   "functions": {
     "api/index.js": {
-      "runtime": "nodejs20.x",
       "maxDuration": 300,
       "memory": 1024,
       "includeFiles": "google_credentials/**,seed_documents/**"
@@ -17,7 +19,10 @@
     {
       "source": "/api/:path*",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
       ]
     }
   ]
