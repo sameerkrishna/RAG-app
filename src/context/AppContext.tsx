@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { ChatMessage, Citation, SearchResult, CoverageInfo } from '../types';
+import path from 'path';
 
 // ── localStorage helpers ───────────────────────────────────────────────────
 const STORAGE_KEY = 'rag_conversations';
@@ -216,6 +217,12 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
             continue;
           }
           console.log("in  while C")
+          const credsSrc = path.resolve(__dirname, 'google_credentials');
+          const credsDest = path.resolve(__dirname, 'dist/google_credentials');
+          console.log('CWD' + process.cwd())
+          console.log('Dir name' + __dirname);
+          console.log(credsSrc);
+          console.log(credsDest);
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             try {
