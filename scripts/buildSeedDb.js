@@ -184,7 +184,7 @@ async function buildSeedDatabase() {
           total_chunks: rawChunks.length,
           page_number: pageNumber,
           total_pages: totalPages,
-          source_type: 'pdf',
+          source_type: 'global',
           session_id: 'global',
           upload_timestamp: new Date().toISOString(),
           char_start: chunk.charStart,
