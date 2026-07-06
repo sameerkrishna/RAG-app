@@ -41,8 +41,8 @@ export async function handleChatStream(req, res) {
   }
 
   const sessionId = providedSessionId || uuidv4();
-  const convId    = providedConvId || uuidv4();
-  const answerId  = messageId || uuidv4();
+  const convId = providedConvId || uuidv4();
+  const answerId = messageId || uuidv4();
 
   getOrCreateSession(sessionId);
 
@@ -60,10 +60,13 @@ export async function handleChatStream(req, res) {
   addTurnWithCitations(convId, 'user', query.trim());
 
   try {
+    const tQueryStart = performance.now();
+
     sendEvent('status', { stage: 'retrieving', message: 'Searching knowledge base...' });
 
     const expandedQuery = expandQuery(query);
-    const { results, coverage } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
+    const { results, coverage, timings } = await retrieveForQuery(expandedQuery, sessionId, { topK: 5 });
+    const tChunksReceived = performance.now();
 
     sendEvent('retrieval', {
       results: results.length,
@@ -110,9 +113,9 @@ export async function handleChatStream(req, res) {
     }
 
     const questions = filteredTurns.filter(t => t.role === 'user');
-    const answers   = filteredTurns.filter(t => t.role === 'assistant');
-    const qSection  = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
-    const aSection  = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
+    const answers = filteredTurns.filter(t => t.role === 'assistant');
+    const qSection = questions.map((t, i) => `Q${i + 1}: ${t.content}`).join('\n');
+    const aSection = answers.map((t, i) => `A${i + 1}: ${t.content}`).join('\n');
     const memoryContext = filteredTurns.length > 0
       ? `Previous Questions:\n${qSection}\n\nPrevious Answers:\n${aSection}`
       : '';
@@ -129,8 +132,7 @@ GLOBAL RULES
 - Don't let explanations imply a recommendation. Don't ask questions that edge toward personalization. Note that a qualified financial advisor can help with personal decisions, where relevant.
 - If the provided context is absent, weak, or not directly relevant, do not answer from prior knowledge.
 
-Your behaviour depends on the type of input:
-1. GREETINGS & SMALL TALK (hi, hello, how are you, do you have a life, general chat):
+1. GREETINGS & SMALL TALK
 - Respond warmly and naturally.
 - Do not mention the knowledge base or documents.
 - Do not add citations.
@@ -184,9 +186,16 @@ ${memoryContext || '(No previous conversation)'}
 CURRENT QUESTION: ${query}`;
 
     let fullResponse = '';
+    let isFirstToken = true;
+    let tFirstToken;
 
+    const tLlmStart = performance.now();
     for await (const chunk of streamResponse(prompt)) {
       if (chunk.type === 'token') {
+        if (isFirstToken) {
+          tFirstToken = performance.now();
+          isFirstToken = false;
+        }
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
       } else if (chunk.type === 'error') {
@@ -195,6 +204,20 @@ CURRENT QUESTION: ${query}`;
         fullResponse = chunk.response;
       }
     }
+
+    // ── Performance metrics ──────────────────────────────────────────
+    const metric1_queryToEmbedding = (tChunksReceived - tQueryStart) - (timings?.retrievalMs || 0);
+    const metric2_embeddingToChunks = timings?.retrievalMs || 0;
+    const metric3_chunksToFirstToken = tFirstToken ? tFirstToken - tChunksReceived : -1;
+    const metric4_promptToFirstToken = tFirstToken ? tFirstToken - tLlmStart : -1;
+    const metric5_queryToFirstToken = tFirstToken ? tFirstToken - tQueryStart : -1;
+    console.log('\n┌─── ⏱  Performance Metrics ───────────────────────────┐');
+    console.log(`│  1. Query → Embedding response  : ${metric1_queryToEmbedding.toFixed(0)} ms`);
+    console.log(`│  2. Embedding → Chunks retrieved: ${metric2_embeddingToChunks.toFixed(0)} ms`);
+    console.log(`│  3. Chunks → First LLM token    : ${metric3_chunksToFirstToken >= 0 ? metric3_chunksToFirstToken.toFixed(0) + ' ms' : 'N/A'}`);
+    console.log(`│  4. API Call                    : ${metric4_promptToFirstToken >= 0 ? metric4_promptToFirstToken.toFixed(0) + ' ms' : 'N/A'}`);
+    console.log(`│  5. Query sent → First token    : ${metric5_queryToFirstToken >= 0 ? metric5_queryToFirstToken.toFixed(0) + ' ms' : 'N/A'}`);
+    console.log('└──────────────────────────────────────────────────────┘\n');
 
     const citedIndices = [];
     const seen = new Set();
@@ -223,21 +246,21 @@ CURRENT QUESTION: ${query}`;
     const finalCitations = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : matchedCitations
-          .map(c => ({ ...c, index: indexMap.get(c.index) }))
-          .filter(c => c.index !== undefined)
-          .sort((a, b) => a.index - b.index);
+        .map(c => ({ ...c, index: indexMap.get(c.index) }))
+        .filter(c => c.index !== undefined)
+        .sort((a, b) => a.index - b.index);
 
     const matchedChunkIds = new Set(matchedCitations.map(c => c.chunkId));
 
     const finalSources = (isOutOfScope || matchedCitations.length === 0)
       ? []
       : sources
-          .filter(s => matchedChunkIds.has(s.chunkId))
-          .sort((a, b) => {
-            const idxA = finalCitations.find(c => c.chunkId === a.chunkId)?.index ?? 99;
-            const idxB = finalCitations.find(c => c.chunkId === b.chunkId)?.index ?? 99;
-            return idxA - idxB;
-          });
+        .filter(s => matchedChunkIds.has(s.chunkId))
+        .sort((a, b) => {
+          const idxA = finalCitations.find(c => c.chunkId === a.chunkId)?.index ?? 99;
+          const idxB = finalCitations.find(c => c.chunkId === b.chunkId)?.index ?? 99;
+          return idxA - idxB;
+        });
 
     addTurnWithCitations(convId, 'assistant', rewrittenResponse, finalCitations, coverage, answerId);
 
