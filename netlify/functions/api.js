@@ -2,6 +2,10 @@ import serverless from 'serverless-http';
 import express from 'express';
 import cors from 'cors';
 import { EventEmitter } from 'events';
+import dotenv from 'dotenv';
+
+// Load env vars for Netlify Functions (they're passed via Netlify UI, but this helps local dev)
+dotenv.config();
 
 // Import routers
 import healthRouter from '../../server/api/health.js';
@@ -10,6 +14,10 @@ import chatRouter from '../../server/api/chat.js';
 import feedbackRouter from '../../server/api/feedback.js';
 import { getOrCreateSession, initSessionWithGlobalDocs } from '../../server/services/sessionService.js';
 import { addTurnWithCitations, clearMemory } from '../../server/services/memoryService.js';
+
+console.log('[api] Function starting...');
+console.log('[api] CHROMA_API_KEY:', process.env.CHROMA_API_KEY ? 'SET' : 'MISSING');
+console.log('[api] GOOGLE_APPLICATION_CREDENTIALS:', process.env.GOOGLE_APPLICATION_CREDENTIALS || 'NOT SET');
 
 const app = express();
 
@@ -44,7 +52,10 @@ app.get('/ping', (req, res) => {
 app.post('/session/init', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
 
+  console.log('[session/init] Request received for session:', sessionId);
+
   if (!sessionId) {
+    console.error('[session/init] Missing x-session-id header');
     return res.status(400).json({ error: 'Missing x-session-id header', code: 'MISSING_SESSION' });
   }
 
@@ -52,10 +63,12 @@ app.post('/session/init', async (req, res) => {
 
   try {
     await initSessionWithGlobalDocs(sessionId);
+    console.log('[session/init] Session initialized successfully:', sessionId);
     res.json({ ready: true, sessionId });
   } catch (err) {
-    console.warn('Session init warning:', err.message);
-    res.json({ ready: false, sessionId, warning: err.message });
+    console.error('[session/init] Failed:', err.message);
+    console.error('[session/init] Stack:', err.stack);
+    res.status(500).json({ ready: false, sessionId, error: err.message, stack: err.stack });
   }
 });
 
@@ -90,11 +103,13 @@ app.use('/feedback', feedbackRouter);
 
 // ERROR HANDLER
 app.use((err, req, res, next) => {
-  console.error('ERROR MIDDLEWARE');
-  console.error(err);
+  console.error('[ERROR] Unhandled error:', err.message);
+  console.error('[ERROR] Stack:', err.stack);
+  console.error('[ERROR] Code:', err.code);
   res.status(500).json({
     error: err.message,
-    stack: err.stack
+    code: err.code || 'INTERNAL_ERROR',
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
