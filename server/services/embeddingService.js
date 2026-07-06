@@ -105,6 +105,7 @@ function estimateTokensForTexts(texts) {
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
   const outputDimensionality = parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS) || 3072;
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
   const credentialPath = "google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json";
   const credsSrc = path.resolve(__dirname, 'google_credentials');

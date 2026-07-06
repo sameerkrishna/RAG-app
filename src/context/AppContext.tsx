@@ -217,6 +217,8 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
             continue;
           }
           console.log("in  while C")
+          const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
           const credsSrc = path.resolve(__dirname, 'google_credentials');
           const credsDest = path.resolve(__dirname, 'dist/google_credentials');
           console.log('CWD' + process.cwd())
