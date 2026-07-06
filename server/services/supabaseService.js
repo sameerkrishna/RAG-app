@@ -27,7 +27,7 @@ export function insertConversationAsync(sessionId, data) {
       console.log(`[Supabase] Inserting conversation for session ${sessionId}, answer_key: ${data.answer_key}`);
       const { error } = await supabase.from('Conversation_History').insert(data);
       if (error) {
-        //console.error('[Supabase] Error inserting conversation history:', error);
+        ////console.error('[Supabase] Error inserting conversation history:', error);
       } else {
         console.log(`[Supabase] Successfully inserted conversation for session ${sessionId}`);
       }
@@ -46,6 +46,34 @@ export function insertConversationAsync(sessionId, data) {
   });
 
   return nextPromise;
+}
+
+/**
+ * Asynchronously updates the feedback for a conversation in Supabase.
+ */
+export async function updateFeedbackAsync(answerKey, feedback, retries = 2) {
+  try {
+    const { error } = await supabase
+      .from('Conversation_History')
+      .update({ feedback })
+      .eq('answer_key', answerKey);
+
+    if (error) {
+      throw error;
+    } else {
+      console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
+    }
+  } catch (error) {
+    const isNetworkError = error.message && error.message.includes('fetch failed');
+    if (isNetworkError && retries > 0) {
+      //console.warn(`[Supabase] Network error during update, retrying... (${retries} attempts left)`);
+      // Wait briefly before retrying (e.g., 500ms)
+      await new Promise(res => setTimeout(res, 500));
+      return updateFeedbackAsync(answerKey, feedback, retries - 1);
+    }
+    //console.error('[Supabase] Error updating feedback:', error);
+    throw error;
+  }
 }
 
 /**
