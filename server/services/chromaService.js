@@ -1,5 +1,4 @@
-import { CloudClient, Schema, SparseVectorIndexConfig, DOCUMENT_KEY, Search, Knn, Rrf } from 'chromadb';
-import { ChromaBm25EmbeddingFunction } from '@chroma-core/chroma-bm25';
+import { CloudClient } from 'chromadb';
 import { v4 as uuidv4 } from 'uuid';
 
 const BATCH_SIZE = 300;
@@ -7,23 +6,6 @@ const BATCH_SIZE = 300;
 let cloudClient = null;
 let globalCollection = null;
 let _globalCollectionPromise = null;
-let _collectionSchema = null;
-
-// Lazy — avoids loading BM25 model files at module import time
-function getCollectionSchema() {
-  if (!_collectionSchema) {
-    const bm25 = new ChromaBm25EmbeddingFunction();
-    _collectionSchema = new Schema().createIndex(
-      new SparseVectorIndexConfig({
-        embeddingFunction: bm25,
-        sourceKey: DOCUMENT_KEY,
-        bm25: true
-      }),
-      'sparse_bm25'
-    );
-  }
-  return _collectionSchema;
-}
 
 function getCloudClient() {
   if (!cloudClient) {
@@ -64,7 +46,6 @@ export async function getGlobalCollection() {
       try {
         const col = await client.getOrCreateCollection({
           name: collectionName,
-          schema: getCollectionSchema(),
           metadata: {
             description: 'Permanent seed documents for RAG',
             type: 'global_knowledge'
@@ -149,71 +130,10 @@ export async function queryCollection(collection, queryEmbedding, topK = 5, wher
   }
 }
 
-/**
- * Hybrid search using Chroma Cloud Search API with RRF (dense + sparse BM25).
- * Returns results in the same shape as queryCollection() for backward compatibility.
- * Accepts an optional `where` clause for metadata filtering (e.g. session_id $in).
- */
+// BM25 sparse index removed for serverless compatibility. Dense-only search
+// is used via Gemini embeddings which provide high-quality semantic retrieval.
 export async function hybridQueryCollection(collection, queryText, queryEmbedding, topK = 5, where = undefined) {
-  try {
-    let search = new Search()
-      .rank(Rrf({
-        ranks: [
-          Knn({ query: queryEmbedding, returnRank: true, limit: 20 }),
-          Knn({ query: queryText, key: 'sparse_bm25', returnRank: true, limit: 20 })
-        ],
-        weights: [0.9, 0.1],
-        k: 60
-      }))
-      .where(where)
-      .select("#document", "#metadata", "#score")
-      .limit(topK);
-
-    const raw = await collection.search(search);
-
-    // Parallel‑array structure: ids[0], documents[0], metadatas[0], scores[0]
-    if (!raw.ids || !raw.ids[0] || raw.ids[0].length === 0) {
-      return [];
-    }
-
-    const ids = raw.ids[0];
-    const docs = raw.documents?.[0] ?? [];
-    const metas = raw.metadatas?.[0] ?? [];
-    const scores = raw.scores?.[0] ?? [];
-
-    // 1. Define global RRF bounds based on your weights [0.7, 0.3] and limits (100)
-    // Max possible raw RRF: 1 / (60 + 1) = 0.0163934
-    // Min possible raw RRF: 1 / (60 + 100) = 0.0062500
-    const MAX_RRF = 1 / 61;
-    const MIN_RRF = 1 / 160;
-
-    return ids.map((id, idx) => {
-      // Chroma returns negative values (e.g. -0.01639), convert to positive raw RRF
-      const rawRRF = Math.abs(scores[idx] ?? MIN_RRF);
-
-      // 2. Linear min-max normalization to fit perfectly between 0.0 and 1.0
-      let normalizedScore = (rawRRF - MIN_RRF) / (MAX_RRF - MIN_RRF);
-
-      // Boundary protection
-      normalizedScore = Math.max(0, Math.min(1, normalizedScore));
-
-      //const finalScore = Math.round(normalizedScore * 100) / 100;
-
-      return {
-        id,
-        text: docs[idx] ?? '',
-        metadata: metas[idx] ?? {},
-        distance: 1 - normalizedScore,
-        score: normalizedScore
-      };
-    });
-
-
-  } catch (error) {
-    console.error('Hybrid query failed, falling back to dense-only:', error.message);
-    // Graceful fallback to dense-only search for backward compatibility
-    return queryCollection(collection, queryEmbedding, topK, where);
-  }
+  return queryCollection(collection, queryEmbedding, topK, where);
 }
 
 /**
