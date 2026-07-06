@@ -27,13 +27,13 @@ export function insertConversationAsync(sessionId, data) {
       console.log(`[Supabase] Inserting conversation for session ${sessionId}, answer_key: ${data.answer_key}`);
       const { error } = await supabase.from('Conversation_History').insert(data);
       if (error) {
-        console.error('[Supabase] Error inserting conversation history:', error);
+        //console.error('[Supabase] Error inserting conversation history:', error);
       } else {
         console.log(`[Supabase] Successfully inserted conversation for session ${sessionId}`);
       }
     })
     .catch((err) => {
-      console.error('[Supabase] Unexpected error during insertion chain:', err);
+      //console.error('[Supabase] Unexpected error during insertion chain:', err);
     });
 
   sessionInsertPromises.set(sessionId, nextPromise);
@@ -61,7 +61,7 @@ export async function updateFeedbackAsync(answerKey, feedback, retries = 2) {
     if (error) {
       throw error;
     } else {
-      //console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
+      console.log(`[Supabase] Successfully updated feedback for answer_key: ${answerKey}`);
     }
   } catch (error) {
     const isNetworkError = error.message && error.message.includes('fetch failed');
