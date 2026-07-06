@@ -2,6 +2,8 @@ import { GoogleGenAI } from '@google/genai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from 'url';
+
 // ============================================================
 // 1. SLIDING WINDOW RATE LIMITER
 // ============================================================
