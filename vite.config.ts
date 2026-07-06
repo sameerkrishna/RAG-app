@@ -36,24 +36,10 @@ function expressPlugin() {
   };
 }
 
-function copyNetlifyFiles() {
+function copyStaticAssets() {
   return {
-    name: 'copy-netlify-files',
+    name: 'copy-static-assets',
     closeBundle() {
-      // Copy _redirects
-      const redirectsSrc = path.resolve(__dirname, 'dist/_redirects');
-      if (fs.existsSync(redirectsSrc)) {
-        console.log('✅ _redirects exists in dist');
-      }
-
-      // Copy netlify.toml
-      const netlifyToml = path.resolve(__dirname, 'netlify.toml');
-      const netlifyTomlDest = path.resolve(__dirname, 'dist/netlify.toml');
-      if (fs.existsSync(netlifyToml)) {
-        fs.copyFileSync(netlifyToml, netlifyTomlDest);
-        console.log('✅ netlify.toml copied to dist');
-      }
-
       // Copy seed_documents folder to dist
       const seedSrc = path.resolve(__dirname, 'seed_documents');
       const seedDest = path.resolve(__dirname, 'dist/seed_documents');
@@ -90,7 +76,7 @@ function copyNetlifyFiles() {
 }
 
 export default defineConfig({
-  plugins: [react(), expressPlugin(), copyNetlifyFiles()],
+  plugins: [react(), expressPlugin(), copyStaticAssets()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
