@@ -78,7 +78,7 @@ export async function handleChatStream(req, res) {
       documentId: r.metadata.document_id,
       filename: r.metadata.filename,
       pageNumber: r.metadata.page_number,
-      excerpt: cleanExcerpt(r.text.slice(0, 200)),
+      excerpt: cleanExcerpt(r.text),
       score: r.score,
       sourceType: r.source_type
     }));

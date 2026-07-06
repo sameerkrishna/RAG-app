@@ -155,7 +155,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
       content: query,
       timestamp: new Date()
     };
-
+    console.log("In callback");
     setMessages(prev => {
       const next = [...prev, userMessage];
       persist(next, convId);
@@ -201,10 +201,12 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
       let buffer = '';
       let currentEventName = '';
 
+      console.log("before while")
       while (true) {
         const { done, value } = await reader.read();
+        console.log("in  while")
         if (done) break;
-
+        console.log("in  while B")
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
@@ -214,11 +216,12 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
             currentEventName = line.slice(7).trim();
             continue;
           }
-
+          console.log("in  while C")
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             try {
               const payload = JSON.parse(data);
+              console.log("Parsed event:", currentEventName, payload);
 
               if (currentEventName === 'token' && payload.text) {
                 setIsThinking(false);
@@ -242,7 +245,7 @@ export function AppProvider({ children, sessionId }: AppProviderProps) {
                 sources = payload.sources || [];
                 const isRefusal = payload.action === 'refusal';
                 const finalResponse = payload.response || accumulatedText;
-
+                console.log("In event ===complete")
                 setMessages(prev => {
                   const next = prev.map(m =>
                     m.id === assistantMessageId
