@@ -165,8 +165,8 @@ export default function Assistant({ sessionId }: AssistantProps) {
           )}
           {!sidebarCollapsed && (
             <div className="flex flex-col min-w-0">
-              <span className="text-sm font-semibold leading-tight truncate">Knowledge Assistant</span>
-              <span className="text-[11px] text-muted-foreground leading-tight">AI-Powered RAG</span>
+              <span className="text-sm font-semibold leading-tight truncate">Invest Ed</span>
+              <span className="text-[11px] text-muted-foreground leading-tight">AI-powered Personal Finance Explainer</span>
             </div>
           )}
           <button
@@ -406,27 +406,26 @@ export default function Assistant({ sessionId }: AssistantProps) {
                   <Bot className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold">Knowledge Assistant</h2>
-                  <p className="text-xs text-muted-foreground">AI-Powered RAG System</p>
+                  <h2 className="text-lg font-semibold">Invest Ed</h2>
+                  <p className="text-xs text-muted-foreground">AI-powered Personal Finance Explainer</p>
                 </div>
               </div>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  This is a <strong className="text-foreground">Retrieval-Augmented Generation (RAG)</strong> application that helps you query and understand your document knowledge base.
-                </p>
-                <p>
-                  <strong className="text-foreground">How it works:</strong>
-                </p>
-                <ul className="list-disc list-inside space-y-1.5 text-xs leading-relaxed">
-                  <li>Upload PDF documents to the Knowledge Base</li>
-                  <li>Documents are processed and embedded into a vector database</li>
-                  <li>Ask questions in natural language</li>
-                  <li>The system retrieves relevant passages and generates accurate, contextual answers</li>
-                  <li>View source citations to verify information</li>
-                </ul>
-                <p className="text-xs pt-2">
-                  Responses are AI-generated. Always verify important information using the provided source citations.
-                </p>
+                  This is a <strong className="text-foreground">Retrieval-Augmented Generation (RAG)</strong> application that helps you understand personal finance concepts such as Stock Markets, Mutual Funds, Index funds, Risk, and Insurance using trusted educational documents.
+                  <p>
+                    <strong className="text-foreground">How it works:</strong>
+                  </p>
+                  <ul className="list-disc list-inside space-y-1.5 text-xs leading-relaxed">
+                    <li>Upload PDF documents or curated trusted personal finance explainers.</li>
+                    <li>The system processes and stores them in a searchable knowledge base.</li>
+                    <li>Ask questions in natural language. When you ask a question, it retrieves the most relevant passages from the stored documents.</li>
+                    <li>The LLM generates accurate, contextual answers based on the retrieved passages.</li>
+                    <li>It also sources citations to help you verify the explanation.</li>
+                  </ul>
+                  <p className="text-xs pt-2">
+                    Responses are AI-generated. Always verify important information using the provided source citations.
+                  </p>
               </div>
               <div className="mt-6 flex justify-end">
                 <Button onClick={() => setInfoDialogOpen(false)} className="px-4">
