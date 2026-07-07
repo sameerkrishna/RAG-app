@@ -241,7 +241,12 @@
       let blobUrl = null;
       try {
         const blob = await uploadPdfToStorage(sessionId, documentId, cleanFilename, file.buffer);
-        blobUrl = blob.url;
+        // Save downloadUrl (without forced download) if available for private blobs, otherwise fallback to url
+        if (blob.downloadUrl) {
+          blobUrl = blob.downloadUrl.replace('?download=1&', '?').replace('?download=1', '');
+        } else {
+          blobUrl = blob.url;
+        }
       } catch (err) {
         sseEvent(res, 'error', { message: 'Failed to upload PDF to cloud storage', code: 'UPLOAD_ERROR' });
         return res.end();
