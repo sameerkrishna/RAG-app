@@ -23,6 +23,7 @@
     isSessionSeeded
   } from '../services/sessionService.js';
   import { clearMemory } from '../services/memoryService.js';
+  import { uploadPdfToStorage, deletePdfFromStorage, downloadPdfFromStorage } from '../services/blobService.js';
 
   const router = Router();
 
@@ -52,10 +53,7 @@
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, sanitizeFilename(file.originalname))
-  });
+  const storage = multer.memoryStorage();
 
   const upload = multer({
     storage,
@@ -127,10 +125,8 @@
     return out;
   }
 
-  async function parsePDFWithBoundaryMap(filePath) {
+  async function parsePDFWithBoundaryMap(buffer) {
     try {
-      const buffer = fs.readFileSync(filePath);
-
       const pages = [];
       await pdf(buffer, {
         pagerender: (pageData) => {
@@ -223,31 +219,35 @@
 
       const uploadedCount = session.documents.filter(d => d.sourceType === 'session_upload').length;
       if (uploadedCount >= maxPDFs) {
-        fs.unlinkSync(file.path);
         sseEvent(res, 'error', { message: `Maximum ${maxPDFs} uploads reached`, code: 'TOO_MANY_PDFS' });
         return res.end();
       }
 
       if (session.documents.some(d => d.filename === cleanFilename)) {
-        fs.unlinkSync(file.path);
         sseEvent(res, 'error', { message: `"${cleanFilename}" already uploaded`, code: 'DUPLICATE_FILE' });
         return res.end();
       }
 
       console.log(`[upload] [${sessionId}] Phase 1 — parsing ${cleanFilename} (${file.size} bytes)`);
-      const { fullText, pageMap, totalPages } = await parsePDFWithBoundaryMap(file.path);
+      const { fullText, pageMap, totalPages } = await parsePDFWithBoundaryMap(file.buffer);
 
       if (!fullText || fullText.trim().length < 50) {
-        fs.unlinkSync(file.path);
         sseEvent(res, 'error', { message: 'No extractable text — PDF may be scanned or image-only', code: 'EMPTY_PDF' });
         return res.end();
       }
 
       const documentId = uuidv4();
+      
+      try {
+        await uploadPdfToStorage(sessionId, documentId, cleanFilename, file.buffer);
+      } catch (err) {
+        sseEvent(res, 'error', { message: 'Failed to upload PDF to cloud storage', code: 'UPLOAD_ERROR' });
+        return res.end();
+      }
+      
       const rawChunks = chunkText(fullText);
 
       if (rawChunks.length === 0) {
-        fs.unlinkSync(file.path);
         sseEvent(res, 'error', { message: 'No content could be extracted from PDF', code: 'EMPTY_PDF' });
         return res.end();
       }
@@ -397,9 +397,6 @@
       res.end();
 
     } catch (error) {
-      if (req.file && fs.existsSync(req.file.path)) {
-        try { fs.unlinkSync(req.file.path); } catch { }
-      }
       console.error('[upload] Unhandled error:', error);
       sseEvent(res, 'error', { message: error.message || 'Upload failed', code: error.code || 'UPLOAD_ERROR' });
       res.end();
@@ -510,12 +507,11 @@
       }
 
       if (filename) {
-        const filePath = path.join(uploadDir, filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          console.log(`[delete] Removed file: ${filePath}`);
-        } else {
-          console.warn(`[delete] File not found on disk: ${filePath}`);
+        try {
+          await deletePdfFromStorage(sessionId, documentId, filename);
+          console.log(`[delete] Removed file from Supabase: ${filename}`);
+        } catch (err) {
+          console.warn(`[delete] Failed to remove from Supabase: ${err.message}`);
         }
       }
 
@@ -529,16 +525,12 @@
   // ─── Get document file ──────────────────────────────────────────────────────
   export async function getDocumentFile(req, res) {
     const filename = req.query.filename;
+    const { documentId } = req.params;
+    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
     try {
       if (filename) {
-        const uploadPath = path.join(uploadDir, filename);
-        if (fs.existsSync(uploadPath)) {
-          res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', contentDisposition(filename));
-          return fs.createReadStream(uploadPath).pipe(res);
-        }
-
+        // 1. Try seed documents
         const seedPath = path.join(seedDir, filename);
         if (fs.existsSync(seedPath)) {
           res.setHeader('Content-Type', 'application/pdf');
@@ -554,6 +546,21 @@
             res.setHeader('Content-Type', 'application/pdf');
             res.setHeader('Content-Disposition', contentDisposition(match));
             return fs.createReadStream(matchPath).pipe(res);
+          }
+        }
+        
+        // 2. Try Vercel Blob Storage for session uploads
+        if (sessionId && documentId) {
+          try {
+            const blob = await downloadPdfFromStorage(sessionId, documentId, filename);
+            const arrayBuffer = await blob.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', contentDisposition(filename));
+            return res.send(buffer);
+          } catch (err) {
+            console.warn(`[getDocumentFile] Blob download failed for ${filename}:`, err.message);
           }
         }
       }
