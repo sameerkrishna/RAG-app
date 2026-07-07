@@ -59,6 +59,7 @@ export function insertConversationAsync(sessionId, data) {
     });
 
   sessionInsertPromises.set(sessionId, nextPromise);
+  return nextPromise;
 
   // Optional: clean up the promise from the map if it's the last one
   nextPromise.finally(() => {

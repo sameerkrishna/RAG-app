@@ -276,8 +276,9 @@ CURRENT QUESTION: ${query}`;
       latency_TTFT: metric5_queryToFirstToken >= 0 ? `${Math.round(metric5_queryToFirstToken)}ms` : '0ms'
     };
 
-    // Kick off DB insertion asynchronously (chained per session)
-    insertConversationAsync(sessionId, {
+    // Kick off DB insertion synchronously to prevent serverless function termination 
+    // mid-TLS handshake (which causes ECONNRESET fetch failed errors)
+    await insertConversationAsync(sessionId, {
       answer_key: answerId,
       feedback: 'none',
       conversation: conversationJson,
