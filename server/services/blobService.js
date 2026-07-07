@@ -1,4 +1,4 @@
-import { put, del, list } from '@vercel/blob';
+import { put, del, list, get } from '@vercel/blob';
 
 /**
  * Uploads a PDF buffer to Vercel Blob.
@@ -28,15 +28,28 @@ export async function getPdfUrlFromStorage(sessionId, documentId, filename) {
 
   if (blobs.length > 0) {
     const blob = blobs[0];
-    // For private blobs, we must use the downloadUrl to get the access token.
-    // Removing 'download=1' allows the browser to view it inline instead of forcing a download.
     if (blob.downloadUrl) {
-      return blob.downloadUrl.replace('?download=1&', '?').replace('?download=1', '');
+      return blob.downloadUrl;
     }
     return blob.url;
   }
 
   throw new Error('PDF not found in blob storage');
+}
+
+/**
+ * Gets a Web Stream for a private PDF from Vercel Blob.
+ */
+export async function getPdfStreamFromStorage(url) {
+  const result = await get(url, {
+    access: 'private',
+  });
+  
+  if (!result) {
+    throw new Error('PDF not found in blob storage');
+  }
+  
+  return result;
 }
 
 /**
