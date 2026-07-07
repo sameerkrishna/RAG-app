@@ -1,4 +1,4 @@
-import { put, del } from '@vercel/blob';
+import { put, del, list } from '@vercel/blob';
 
 /**
  * Uploads a PDF buffer to Vercel Blob.
@@ -16,28 +16,48 @@ export async function uploadPdfToStorage(sessionId, documentId, filename, buffer
 }
 
 /**
- * Gets the public URL for a PDF from Vercel Blob.
+ * Gets the exact URL for a PDF from Vercel Blob by searching.
  */
-export function getPdfUrlFromStorage(sessionId, documentId, filename) {
-  const filePath = `documents/${sessionId}/${documentId}_${filename}`;
+export async function getPdfUrlFromStorage(sessionId, documentId, filename) {
+  const filePath = `documents/${sessionId}/${documentId}_`; // The filename might have been altered by Vercel Blob, so we search by prefix
   
-  // Construct the Vercel Blob public URL
-  const storeId = process.env.BLOB_STORE_ID;
-  const url = `https://${storeId}.public.blob.vercel-storage.com/${filePath}`;
+  const { blobs } = await list({
+    prefix: filePath,
+    limit: 1
+  });
   
-  return url;
+  if (blobs.length > 0) {
+    return blobs[0].url;
+  }
+  
+  throw new Error('PDF not found in blob storage');
 }
 
 /**
  * Deletes a PDF from Vercel Blob.
  */
-export async function deletePdfFromStorage(sessionId, documentId, filename) {
-  const filePath = `documents/${sessionId}/${documentId}_${filename}`;
-  console.log(`[VercelBlob] Deleting PDF from storage: ${filePath}`);
+export async function deletePdfFromStorage(sessionId, documentId, filename, knownUrl = null) {
+  if (knownUrl) {
+    console.log(`[VercelBlob] Deleting PDF from storage using known URL: ${knownUrl}`);
+    await del(knownUrl);
+    return true;
+  }
 
-  const storeId = process.env.BLOB_STORE_ID;
-  const url = `https://${storeId}.public.blob.vercel-storage.com/${filePath}`;
+  const filePath = `documents/${sessionId}/${documentId}_`;
+  console.log(`[VercelBlob] Deleting PDF from storage (searching by prefix): ${filePath}`);
 
-  await del(url);
-  return true;
+  const { blobs } = await list({
+    prefix: filePath,
+    limit: 1
+  });
+
+  if (blobs.length > 0) {
+    const url = blobs[0].url;
+    await del(url);
+    console.log(`[VercelBlob] Successfully deleted: ${url}`);
+    return true;
+  }
+  
+  console.log(`[VercelBlob] No file found to delete for: ${filePath}`);
+  return false;
 }

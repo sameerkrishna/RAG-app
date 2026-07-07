@@ -238,8 +238,10 @@
 
       const documentId = uuidv4();
       
+      let blobUrl = null;
       try {
-        await uploadPdfToStorage(sessionId, documentId, cleanFilename, file.buffer);
+        const blob = await uploadPdfToStorage(sessionId, documentId, cleanFilename, file.buffer);
+        blobUrl = blob.url;
       } catch (err) {
         sseEvent(res, 'error', { message: 'Failed to upload PDF to cloud storage', code: 'UPLOAD_ERROR' });
         return res.end();
@@ -289,7 +291,7 @@
 
       addDocumentToSession(sessionId, {
         id: documentId, filename: cleanFilename, fileSize: file.size,
-        pageCount: totalPages, chunkCount: 0, status: 'indexing'
+        pageCount: totalPages, chunkCount: 0, status: 'indexing', url: blobUrl
       });
 
       console.log(`[upload] [${sessionId}] Phase 1 done — ${cleanFilename} added to session as indexing`);
@@ -490,7 +492,12 @@
     const sessionId = req.headers['x-session-id'] || req.query.sessionId;
 
     try {
+      let blobUrl = null;
       if (sessionId) {
+        const session = getOrCreateSession(sessionId);
+        const doc = session.documents.find(d => d.id === documentId);
+        blobUrl = doc?.url;
+
         try {
           const { collection } = await getCollection();
           if (collection) {
@@ -506,12 +513,20 @@
         console.log(`[delete] Cleared memory for session ${sessionId}`);
       }
 
-      if (filename) {
+      if (blobUrl) {
+        try {
+          await deletePdfFromStorage(sessionId, documentId, filename, blobUrl);
+          console.log(`[delete] Removed file from Vercel Blob using known URL: ${filename}`);
+        } catch (err) {
+          console.warn(`[delete] Failed to remove from Vercel Blob: ${err.message}`);
+        }
+      } else if (filename) {
+        // Fallback for older uploads that didn't save the URL
         try {
           await deletePdfFromStorage(sessionId, documentId, filename);
-          console.log(`[delete] Removed file from Supabase: ${filename}`);
+          console.log(`[delete] Removed file from Vercel Blob (fallback search): ${filename}`);
         } catch (err) {
-          console.warn(`[delete] Failed to remove from Supabase: ${err.message}`);
+          console.warn(`[delete] Failed to remove from Vercel Blob: ${err.message}`);
         }
       }
 
@@ -552,7 +567,15 @@
         // 2. Try Vercel Blob Storage for session uploads
         if (sessionId && documentId) {
           try {
-            const url = getPdfUrlFromStorage(sessionId, documentId, filename);
+            const session = getOrCreateSession(sessionId);
+            const doc = session.documents.find(d => d.id === documentId);
+            
+            let url = doc?.url;
+            if (!url) {
+              // Fallback for older uploads that didn't save the URL
+              url = await getPdfUrlFromStorage(sessionId, documentId, filename);
+            }
+            
             return res.redirect(url);
           } catch (err) {
             console.warn(`[getDocumentFile] Blob redirect failed for ${filename}:`, err.message);
