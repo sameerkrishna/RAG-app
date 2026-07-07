@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
 import pdf from 'pdf-parse';
@@ -590,8 +591,18 @@ export async function getDocumentFile(req, res) {
           res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
           
           // Pipe the ReadableStream to Node.js Express response
-          const { Readable } = require('stream');
-          return Readable.fromWeb(result.stream).pipe(res);
+          const readable = Readable.fromWeb(result.stream);
+          readable.pipe(res);
+          
+          // In serverless environments, we must await the stream's completion 
+          // before the function returns, otherwise the lambda may terminate early.
+          await new Promise((resolve, reject) => {
+            readable.on('end', resolve);
+            readable.on('error', reject);
+            res.on('finish', resolve);
+            res.on('error', reject);
+          });
+          return;
         } catch (err) {
           console.warn(`[getDocumentFile] Blob redirect failed for ${filename}:`, err.message);
         }
