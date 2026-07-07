@@ -9,9 +9,10 @@ interface SourceDrawerProps {
   onClose: () => void;
   sources: SearchResult[];
   citations?: Citation[];
+  sessionId?: string;
 }
 
-export default function SourceDrawer({ onClose, sources, citations = [] }: SourceDrawerProps) {
+export default function SourceDrawer({ onClose, sources, citations = [], sessionId }: SourceDrawerProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const handleCopy = async (text: string, id: string) => {
@@ -21,7 +22,10 @@ export default function SourceDrawer({ onClose, sources, citations = [] }: Sourc
   };
 
   const handleViewPdf = (source: SearchResult) => {
-    const url = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
+    let url = `/api/documents/${source.documentId}/file?filename=${encodeURIComponent(source.filename)}`;
+    if (sessionId) {
+      url += `&sessionId=${sessionId}`;
+    }
     const pageUrl = source.pageNumber ? `${url}#page=${source.pageNumber}` : url;
     window.open(pageUrl, '_blank');
   };

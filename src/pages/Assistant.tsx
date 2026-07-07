@@ -384,6 +384,7 @@ export default function Assistant({ sessionId }: AssistantProps) {
             onClose={() => setSourceDrawerOpen(false)}
             sources={selectedSources}
             citations={selectedCitations}
+            sessionId={sessionId}
           />
         )}
       </div>
