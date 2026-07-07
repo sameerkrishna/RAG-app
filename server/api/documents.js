@@ -402,11 +402,10 @@ export async function handleUpload(req, res) {
       sessionId
     });
 
-    res.end();
-
   } catch (error) {
-    console.error('[upload] Unhandled error:', error);
-    sseEvent(res, 'error', { message: error.message || 'Upload failed', code: error.code || 'UPLOAD_ERROR' });
+    console.error('[Upload Document Error]:', error.message || error);
+    sseEvent(res, 'error', { message: 'An internal error occurred during upload. Please try again.', code: error.code || 'UPLOAD_ERROR' });
+  } finally {
     res.end();
   }
 }
@@ -468,10 +467,10 @@ export async function seedingStatusHandler(req, res) {
     await initSessionWithGlobalDocs(sessionId);
     // The seeding function will notify listeners when complete
   } catch (err) {
-    console.error(`[seeding-status] Seeding failed for ${sessionId}:`, err.message);
+    console.error('[Seeding Status Error]:', err.message || err);
     const listeners = global.seedingListeners.get(eventKey) || [];
     listeners.forEach((response) => {
-      sseEvent(response, 'error', { message: err.message, code: 'SEED_FAILED' });
+      sseEvent(response, 'error', { message: 'An error occurred while seeding the knowledge base.', code: 'SEED_FAILED' });
       response.end();
     });
     global.seedingListeners.delete(eventKey);

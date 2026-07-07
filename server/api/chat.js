@@ -199,7 +199,8 @@ CURRENT QUESTION: ${query}`;
         fullResponse += chunk.text;
         sendEvent('token', { text: chunk.text });
       } else if (chunk.type === 'error') {
-        sendEvent('error', { message: chunk.error, code: 'LLM_ERROR' });
+        console.error('[LLM Stream Error]:', chunk.error);
+        sendEvent('error', { message: 'An error occurred while generating the response. Please try again.', code: 'LLM_ERROR' });
       } else if (chunk.type === 'complete') {
         fullResponse = chunk.response;
       }
@@ -296,8 +297,8 @@ CURRENT QUESTION: ${query}`;
     res.end();
 
   } catch (error) {
-    console.error('Chat stream error:', error);
-    sendEvent('error', { message: error.message || 'An error occurred', code: error.code || 'CHAT_ERROR' });
+    console.error('[Chat API Error]:', error.message || error);
+    sendEvent('error', { message: 'An internal error occurred and I cannot respond right now.', code: 'CHAT_ERROR' });
     res.end();
   }
 }
@@ -332,7 +333,8 @@ export async function handleFeedback(req, res) {
     await updateFeedbackAsync(answerId, feedback);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Error updating feedback' });
+    console.error('[Update Feedback Error]:', error.message || error);
+    res.status(500).json({ error: 'An internal error occurred while updating feedback.' });
   }
 }
 
