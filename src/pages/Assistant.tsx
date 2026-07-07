@@ -424,8 +424,9 @@ export default function Assistant({ sessionId }: AssistantProps) {
                     <li>It also sources citations to help you verify the explanation.</li>
                   </ul>
                   <p className="text-xs pt-2">
-                    Responses are AI-generated. Always verify important information using the provided source citations.
+                    This assistant is for educational purposes only. It does not provide financial, investment, tax, legal, or insurance advice or recommendations. Responses are AI-generated. Always verify important information using the provided source citations.
                   </p>
+                </p>
               </div>
               <div className="mt-6 flex justify-end">
                 <Button onClick={() => setInfoDialogOpen(false)} className="px-4">
