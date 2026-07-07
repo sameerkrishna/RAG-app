@@ -272,14 +272,16 @@ CURRENT QUESTION: ${query}`;
       session_id: sessionId,
       query: query,
       chunks: chunksList,
-      llm_response: rewrittenResponse
+      llm_response: rewrittenResponse,
+      latency_TTFT: metric5_queryToFirstToken >= 0 ? `${Math.round(metric5_queryToFirstToken)}ms` : '0ms'
     };
 
     // Kick off DB insertion asynchronously (chained per session)
     insertConversationAsync(sessionId, {
       answer_key: answerId,
       feedback: 'none',
-      conversation: conversationJson
+      conversation: conversationJson,
+      Latency: metric5_queryToFirstToken >= 0 ? Math.round(metric5_queryToFirstToken) : 0
     });
 
     sendEvent('complete', {

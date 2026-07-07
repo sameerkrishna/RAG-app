@@ -131,15 +131,18 @@ export async function initSessionWithGlobalDocs(sessionId) {
     if (session && session.documents.length === 0) {
       const docs = await listDocuments(collection, { session_id: sessionId });
       docs.forEach(doc => {
-        session.documents.push({
-          id: doc.document_id,
-          filename: doc.filename,
-          fileSize: null,
-          pageCount: doc.page_count || null,
-          chunkCount: doc.chunk_count,
-          sourceType: 'session_upload',
-          uploadTimestamp: doc.upload_timestamp
-        });
+        if (!session.documents.find(d => d.id === doc.document_id)) {
+          session.documents.push({
+            id: doc.document_id,
+            filename: doc.filename,
+            fileSize: null,
+            pageCount: doc.page_count || null,
+            chunkCount: doc.chunk_count,
+            sourceType: 'session_upload',
+            uploadTimestamp: doc.upload_timestamp,
+            status: 'ready'
+          });
+        }
       });
       if (docs.length > 0) {
         console.log(`♻️  Reconstructed ${docs.length} session document(s) for ${sessionId}`);
