@@ -16,24 +16,16 @@ export async function uploadPdfToStorage(sessionId, documentId, filename, buffer
 }
 
 /**
- * Downloads a PDF buffer from Vercel Blob.
- * Returns a Blob object (from fetch).
+ * Gets the public URL for a PDF from Vercel Blob.
  */
-export async function downloadPdfFromStorage(sessionId, documentId, filename) {
+export function getPdfUrlFromStorage(sessionId, documentId, filename) {
   const filePath = `documents/${sessionId}/${documentId}_${filename}`;
-  console.log(`[VercelBlob] Downloading PDF from storage: ${filePath}`);
-
+  
   // Construct the Vercel Blob public URL
   const storeId = process.env.BLOB_STORE_ID;
   const url = `https://${storeId}.public.blob.vercel-storage.com/${filePath}`;
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch blob: ${response.statusText}`);
-  }
-
-  const blob = await response.blob();
-  return blob;
+  
+  return url;
 }
 
 /**

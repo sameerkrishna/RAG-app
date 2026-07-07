@@ -23,7 +23,7 @@
     isSessionSeeded
   } from '../services/sessionService.js';
   import { clearMemory } from '../services/memoryService.js';
-  import { uploadPdfToStorage, deletePdfFromStorage, downloadPdfFromStorage } from '../services/blobService.js';
+  import { uploadPdfToStorage, deletePdfFromStorage, getPdfUrlFromStorage } from '../services/blobService.js';
 
   const router = Router();
 
@@ -552,15 +552,10 @@
         // 2. Try Vercel Blob Storage for session uploads
         if (sessionId && documentId) {
           try {
-            const blob = await downloadPdfFromStorage(sessionId, documentId, filename);
-            const arrayBuffer = await blob.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            
-            res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', contentDisposition(filename));
-            return res.send(buffer);
+            const url = getPdfUrlFromStorage(sessionId, documentId, filename);
+            return res.redirect(url);
           } catch (err) {
-            console.warn(`[getDocumentFile] Blob download failed for ${filename}:`, err.message);
+            console.warn(`[getDocumentFile] Blob redirect failed for ${filename}:`, err.message);
           }
         }
       }
