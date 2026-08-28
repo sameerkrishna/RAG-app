@@ -16,7 +16,7 @@
     "api/index.js": {
       "maxDuration": 300,
       "memory": 1024,
-      "includeFiles": "google_credentials/**,seed_documents/**"
+      "includeFiles": "seed_documents/**"
     }
   },
   "headers": [

@@ -98,21 +98,6 @@ function copyStaticAssets() {
                 });
                 console.log("\u2705 seed_documents copied to dist (".concat(files.length, " files)"));
             }
-            // Copy google_credentials folder to dist
-            var credsSrc = path.resolve(__dirname, 'google_credentials');
-            var credsDest = path.resolve(__dirname, 'dist/google_credentials');
-            if (fs.existsSync(credsSrc)) {
-                fs.mkdirSync(credsDest, { recursive: true });
-                var files = fs.readdirSync(credsSrc);
-                files.forEach(function (file) {
-                    var srcFile = path.join(credsSrc, file);
-                    var destFile = path.join(credsDest, file);
-                    if (fs.statSync(srcFile).isFile()) {
-                        fs.copyFileSync(srcFile, destFile);
-                    }
-                });
-                console.log("\u2705 google_credentials copied to dist (".concat(files.length, " files)"));
-            }
         }
     };
 }

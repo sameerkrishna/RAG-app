@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { LLMUnavailableError } from '../utils/errors.js';
+import { getGoogleAuthOptions } from '../config/googleAuth.js';
 
 let genAI = null;
 
@@ -8,7 +9,8 @@ function getGenAI() {
     genAI = new GoogleGenAI({
       vertexai: true,
       project: process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-      location: 'global'
+      location: 'global',
+      ...getGoogleAuthOptions()
     });
   }
   return genAI;

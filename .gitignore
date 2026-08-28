@@ -1,2 +1,6 @@
 node_modules
 .env
+
+# Never commit Google service-account key files.
+google_credentials/
+dist/google_credentials/

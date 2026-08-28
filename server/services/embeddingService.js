@@ -1,8 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { EmbeddingError, is429Error } from '../utils/errors.js';
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from 'url';
+import { getGoogleAuthOptions } from '../config/googleAuth.js';
 
 // ============================================================
 // 1. SLIDING WINDOW RATE LIMITER
@@ -81,7 +79,8 @@ const MAX_RETRY_ATTEMPTS = 5;
 const ai = new GoogleGenAI({
   vertexai: true,
   project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
-  location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'
+  location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
+  ...getGoogleAuthOptions()
 });
 
 // ============================================================
@@ -107,19 +106,6 @@ function estimateTokensForTexts(texts) {
 async function embedBatch(texts, taskType = 'RETRIEVAL_DOCUMENT', attempt = 1) {
   const modelName = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
   const outputDimensionality = parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS) || 3072;
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-  const credentialPath = "google_credentials/project-d48e2f39-2685-4746-aa0-e80a4893d1bc.json";
-  const credsSrc = path.resolve(__dirname, 'google_credentials');
-  const credsDest = path.resolve(__dirname, 'dist/google_credentials');
-  console.log('CWD' + process.cwd())
-  console.log('Dir name' + __dirname);
-  console.log(credsSrc);
-  console.log(credsDest);
-  console.log("resolved =", path.resolve(credentialPath));
-  console.log("exists =", fs.existsSync(credentialPath));
-  console.log("exists abs =", fs.existsSync(path.resolve(credentialPath)));
-  console.log("root files =", fs.readdirSync(process.cwd()));
   try {
     // FIX: `ai.batches.createEmbeddings` is not a real method on the @google/genai SDK.
     // `ai.batches` is for async batch-prediction jobs. Synchronous embedding calls go
