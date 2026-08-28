@@ -8,7 +8,7 @@ function getGenAI() {
   if (!genAI) {
     genAI = new GoogleGenAI({
       vertexai: true,
-      project: process.env.GOOGLE_CLOUD_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+      project: process.env.GOOGLE_CLOUD_PROJECT || 'causal-block-338915',
       location: 'global',
       ...getGoogleAuthOptions()
     });

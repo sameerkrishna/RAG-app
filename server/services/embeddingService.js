@@ -78,7 +78,7 @@ const MAX_RETRY_ATTEMPTS = 5;
 // ============================================================
 const ai = new GoogleGenAI({
   vertexai: true,
-  project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'project-d48e2f39-2685-4746-aa0',
+  project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || 'causal-block-338915',
   location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
   ...getGoogleAuthOptions()
 });

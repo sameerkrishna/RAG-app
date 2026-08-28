@@ -565,7 +565,7 @@ var init_embeddingService = __esm({
     MAX_RETRY_ATTEMPTS = 5;
     ai = new GoogleGenAI({
       vertexai: true,
-      project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || "project-d48e2f39-2685-4746-aa0",
+      project: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || "causal-block-338915",
       location: process.env.GOOGLE_CLOUD_LOCATION || "us-central1"
     });
   }
@@ -1386,7 +1386,7 @@ function getGenAI() {
   if (!genAI) {
     genAI = new GoogleGenAI2({
       vertexai: true,
-      project: process.env.GOOGLE_CLOUD_PROJECT || "project-d48e2f39-2685-4746-aa0",
+      project: process.env.GOOGLE_CLOUD_PROJECT || "causal-block-338915",
       location: "global"
     });
   }
@@ -1874,13 +1874,13 @@ import react from "file:///home/project/node_modules/@vitejs/plugin-react/dist/i
 import path3 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 var __vite_injected_original_import_meta_url2 = "file:///home/project/vite.config.js";
-var __awaiter = function(thisArg, _arguments, P, generator) {
+var __awaiter = function (thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
+    return value instanceof P ? value : new P(function (resolve) {
       resolve(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve, reject) {
+  return new (P || (P = Promise))(function (resolve, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -1901,16 +1901,18 @@ var __awaiter = function(thisArg, _arguments, P, generator) {
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
 };
-var __generator = function(thisArg, body) {
-  var _ = { label: 0, sent: function() {
-    if (t[0] & 1) throw t[1];
-    return t[1];
-  }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
-  return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() {
+var __generator = function (thisArg, body) {
+  var _ = {
+    label: 0, sent: function () {
+      if (t[0] & 1) throw t[1];
+      return t[1];
+    }, trys: [], ops: []
+  }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+  return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function () {
     return this;
   }), g;
   function verb(n) {
-    return function(v) {
+    return function (v) {
       return step([n, v]);
     };
   }
@@ -1975,10 +1977,10 @@ function expressPlugin() {
   var app2;
   return {
     name: "express-plugin",
-    configureServer: function(server) {
-      return __awaiter(this, void 0, void 0, function() {
+    configureServer: function (server) {
+      return __awaiter(this, void 0, void 0, function () {
         var dotenv2, expressApp;
-        return __generator(this, function(_a) {
+        return __generator(this, function (_a) {
           switch (_a.label) {
             case 0:
               return [4, import("file:///home/project/node_modules/dotenv/lib/main.js")];
@@ -1989,12 +1991,12 @@ function expressPlugin() {
             case 2:
               expressApp = _a.sent().default;
               app2 = expressApp;
-              server.middlewares.use("/api", function(req, res, next) {
+              server.middlewares.use("/api", function (req, res, next) {
                 var _a2;
                 if ((_a2 = req.url) === null || _a2 === void 0 ? void 0 : _a2.startsWith("/chat")) {
                   res.setHeader("X-Accel-Buffering", "no");
                   var originalWrite_1 = res.write.bind(res);
-                  res.write = function(chunk) {
+                  res.write = function (chunk) {
                     var result = originalWrite_1(chunk);
                     if (typeof res.flush === "function")
                       res.flush();
